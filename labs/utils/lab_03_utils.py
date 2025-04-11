@@ -397,12 +397,12 @@ def test(model: nn.Module, test_loader: DataLoader):
     """
     model.eval()
 
-    preds_dict = {"preds": torch.Tensor(), "labels": torch.Tensor(), 'losses': torch.Tensor()}
+    preds_dict = {"preds" : torch.Tensor(), "labels" : torch.Tensor(), 'losses': torch.Tensor()}
     for features, labels, _, _ in test_loader:
         # Forward and loss
         preds = model(features)
         loss = F.cross_entropy(preds, labels)
-
+        
         # Store values
         preds_dict["preds"] = torch.cat([preds_dict["preds"], preds.argmax(1)])
         preds_dict["labels"] = torch.cat([preds_dict["labels"], labels])
@@ -414,6 +414,7 @@ def test(model: nn.Module, test_loader: DataLoader):
 
     return f1, loss
 
+    return f1, loss
 
 def plot_training(model, train: Callable, train_loader, val_loader, epochs, optimizer):
     """Plot training results of linear classifier
