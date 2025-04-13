@@ -1,6 +1,8 @@
 import cv2
 import os
-
+"""
+This script will allow to manually crop praline out of the training set provided.
+"""
 # === CONFIGURATION ===
 IMAGE_DIR = '../chocolate_data/dataset_project_iapr2025/train'
 OUTPUT_DIR = '../chocolate_data/praline_clean/raw_praline'

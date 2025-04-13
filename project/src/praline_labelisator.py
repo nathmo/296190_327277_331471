@@ -4,6 +4,9 @@ import csv
 import shutil
 from PIL import Image
 
+"""
+This script allow to label quickly and easily all the praline previously cropped
+"""
 # === CONFIGURATION ===
 IMAGE_DIR = '../chocolate_data/praline_clean/raw_praline'
 OUTPUT_DIR = '../chocolate_data/praline_clean'

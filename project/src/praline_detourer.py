@@ -9,6 +9,10 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 from glob import glob
 
+"""
+This script is useless but the goal was to automate the cleaning/background segmentation by using
+an autoencoder. That didnot work well and I just keep cleaning them by hand
+"""
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
 IMAGE_SIZE = 512

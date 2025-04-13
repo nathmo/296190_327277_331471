@@ -1,0 +1,5 @@
+path: /home/nathann/PycharmProjects/296190_327277_331471/project/chocolate_data/syntheticDataset
+train: images/train
+val: images/val
+nc: 1
+names: ['Amandina']
