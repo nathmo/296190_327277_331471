@@ -5,6 +5,7 @@
 # gitignore template for Jupyter Notebooks
 # website: http://jupyter.org/
 
+syntheticDataset/*
 *misc.xml
 *296190_327277_331471.iml
 .ipynb_checkpoints
@@ -410,4 +411,5 @@ ctranspath.py
 data/data_lab_03/part_02/dhmc*
 convert.py 
 data/project/
+/project/chocolate_data/syntheticDataset/
 /project/chocolate_data/syntheticDataset/
