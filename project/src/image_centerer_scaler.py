@@ -19,7 +19,7 @@ for each picture, print the previous size, bouding box,
 scaling & rotation that where required and the new size (1000
 x1000px)
 """
-path = "../chocolate_data/praline_clean/Comtesse"
+path = ("../chocolate_data/praline_clean/Tentation_noir")
 
 def rotate_image(image, angle):
     """Rotate image and keep the full content."""
