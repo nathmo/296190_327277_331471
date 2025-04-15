@@ -79,7 +79,7 @@ import numpy as np
 from tqdm import tqdm
 
 # Configurations
-NUM_IMAGES = 100
+NUM_IMAGES = 1000
 SCALING_FACTOR = 1.0  # Set to <1.0 to downscale final output
 SAVE_DIR = Path("../chocolate_data/syntheticDataset")
 IMAGE_DIR = SAVE_DIR / "images"
@@ -87,6 +87,8 @@ LABEL_DIR = SAVE_DIR / "labels"
 
 BACKGROUND_DIR = Path("../chocolate_data/praline_clean/Background")
 MISC_DIR = Path("../chocolate_data/praline_clean/MiscObjects")
+# Directory where YOLO label .txt files are stored (both train and val)
+label_dirs = [Path("../chocolate_data/syntheticDataset/labels/train"), Path("../chocolate_data/syntheticDataset/labels/val")]
 
 CHOCOLATE_CLASSES = {
     "Jelly_White": 0,
@@ -104,19 +106,42 @@ CHOCOLATE_CLASSES = {
     "Stracciatella": 12
 }
 
+rescale_factors = {
+    "Amandina": (0.4, 1.0),
+    "Arabia": (1.0, 1.0),
+    "Comtesse": (1.0, 1.0),
+    "Crème_brulée": (1.0, 0.9),
+    "Jelly_White": (0.67, 1.0),
+    "Jelly_Milk": (0.67, 1.0),
+    "Jelly_Black": (0.67, 1.0),
+    "Noblesse": (1.0, 1.0),
+    "Noir_authentique": (1.0, 1.0),
+    "Passion_au_lait": (1.0, 0.75),
+    "Stracciatella": (1.0, 1.0),
+    "Tentation_noir": (1.0, 0.85),
+    "Triangolo": (1.0, 0.8)
+}
+
+
 CHOCOLATE_DIRS = {name: Path(f"../chocolate_data/praline_clean/{name}") for name in CHOCOLATE_CLASSES}
 
 def load_images_from_dir(directory):
     return [Image.open(p).convert("RGBA") for p in directory.glob("*.png")]
 
-def random_transform(image, min_scale=0.5, max_scale=2.0):
+def random_transform(image, class_name, base_rescale_factors, variation=0.2):
     angle = random.uniform(0, 360)
-    scale = random.uniform(min_scale, max_scale)
-    w, h = image.size
-    new_w, new_h = int(w * scale), int(h * scale)
-    image = image.resize((new_w, new_h), resample=Image.Resampling.LANCZOS)
+
+    base_w_factor, base_h_factor = base_rescale_factors[class_name]
+    scale_variation_w = random.uniform(1 - variation, 1 + variation)
+    scale_variation_h = random.uniform(1 - variation, 1 + variation)
+
+    target_w = int(1000 * base_w_factor * scale_variation_w)
+    target_h = int(1000 * base_h_factor * scale_variation_h)
+
+    image = image.resize((target_w, target_h), resample=Image.Resampling.LANCZOS)
     image = image.rotate(angle, expand=True)
     return image
+
 
 def remove_partially(image, max_remove_ratio=0.4):
     if random.random() > 0.2:
@@ -132,8 +157,8 @@ def remove_partially(image, max_remove_ratio=0.4):
     attempts = 20
     for _ in range(attempts):
         w, h = image.size
-        crop_w = random.randint(int(0.2*w), int(0.5*w))
-        crop_h = random.randint(int(0.2*h), int(0.5*h))
+        crop_w = random.randint(int(0.1*w), int(0.25*w))
+        crop_h = random.randint(int(0.1*h), int(0.25*h))
         x = random.randint(0, w - crop_w)
         y = random.randint(0, h - crop_h)
 
@@ -141,7 +166,6 @@ def remove_partially(image, max_remove_ratio=0.4):
         temp_draw = ImageDraw.Draw(crop_mask)
         angle = random.uniform(0, 360)
 
-        # Create rectangular polygon and rotate it
         rect = [(x, y), (x + crop_w, y), (x + crop_w, y + crop_h), (x, y + crop_h)]
         cx, cy = x + crop_w / 2, y + crop_h / 2
         rotated_rect = [
@@ -165,7 +189,7 @@ def remove_partially(image, max_remove_ratio=0.4):
 
     return image
 
-def paste_object(bg, obj, mask, occupied, max_attempts=20, iou_threshold=0.2):
+def paste_object(bg, obj, mask, occupied, max_attempts=20, iou_threshold=0.1):
     bg_w, bg_h = bg.size
     obj_w, obj_h = obj.size
 
@@ -204,8 +228,9 @@ def bbox_to_yolo(bbox, img_size):
     return x_center, y_center, width, height
 
 # Prepare directories
-for subdir in ['train/images', 'train/labels', 'val/images', 'val/labels']:
-    (SAVE_DIR / subdir).mkdir(parents=True, exist_ok=True)
+for split in ['train', 'val']:
+    (SAVE_DIR / 'images' / split).mkdir(parents=True, exist_ok=True)
+    (SAVE_DIR / 'labels' / split).mkdir(parents=True, exist_ok=True)
 
 # Load backgrounds and misc items
 backgrounds = load_images_from_dir(BACKGROUND_DIR)
@@ -223,9 +248,8 @@ for idx in tqdm(range(NUM_IMAGES)):
     misc_to_place = random.randint(2, 6)
     for _ in range(misc_to_place):
         obj = random.choice(misc_items).copy()
-        obj = random_transform(obj)
+        obj = random_transform(obj, "Misc", {"Misc": (1.0, 1.0)})
         bbox = paste_object(background, obj, obj.split()[-1], objects, max_attempts=20, iou_threshold=0.0)
-
     # Paste Chocolates
     choc_to_place = random.randint(0, 8)
     chocolates_used = []
@@ -235,17 +259,15 @@ for idx in tqdm(range(NUM_IMAGES)):
         imgs = chocolates[class_name]
         if not imgs:
             print(f"Warning: No images found for class {class_name}")
-            continue  # Skip this placement
+            continue
         img = random.choice(imgs).copy()
-        img = random_transform(img)
-        img = remove_partially(img)
+        img = random_transform(img, class_name, rescale_factors)  # updated call
         mask = img.split()[-1]
         bbox = paste_object(background, img, mask, objects, max_attempts=20, iou_threshold=0.2)
         if bbox:
             labels.append((class_idx, bbox_to_yolo(bbox, background.size)))
             chocolates_used.append(bbox)
 
-    # Ensure at least one pair of chocolates touch
     if len(chocolates_used) > 1:
         box1 = chocolates_used[-1]
         box2 = chocolates_used[-2]
@@ -255,19 +277,32 @@ for idx in tqdm(range(NUM_IMAGES)):
         y2 = max(box1[3], box2[3])
         labels[-1] = (labels[-1][0], bbox_to_yolo((x1, y1, x2, y2), background.size))
 
-    # Resize if needed
     if SCALING_FACTOR != 1.0:
         new_size = (int(W * SCALING_FACTOR), int(H * SCALING_FACTOR))
         background = background.resize(new_size, Image.ANTIALIAS)
         W, H = new_size
         labels = [(cls, bbox_to_yolo((int(b[0]*SCALING_FACTOR), int(b[1]*SCALING_FACTOR), int(b[2]*SCALING_FACTOR), int(b[3]*SCALING_FACTOR)), (W, H))) for cls, b in labels]
 
-    # Save
     split = 'val' if random.random() < 0.2 else 'train'
     img_name = f"scene_{idx:04d}.jpg"
     label_name = f"scene_{idx:04d}.txt"
 
-    background.convert("RGB").save(SAVE_DIR / split / "images" / img_name)
-    with open(SAVE_DIR / split / "labels" / label_name, 'w') as f:
+    background.convert("RGB").save(SAVE_DIR / 'images' / split / img_name)
+    with open(SAVE_DIR / 'labels' / split / label_name, 'w') as f:
         for cls, (xc, yc, w, h) in labels:
             f.write(f"{cls} {xc:.6f} {yc:.6f} {w:.6f} {h:.6f}\n")
+
+# Ensure each label file has exactly 25 lines by padding with dummy bbox if necessary
+TARGET_BOX_COUNT = 25
+dummy_bbox = (0.0, 0.0, 0.0, 0.0)  # Format: xc, yc, w, h
+
+for label_dir in label_dirs:
+    for label_file in label_dir.glob("*.txt"):
+        with open(label_file, "r") as f:
+            lines = f.readlines()
+
+        n = len(lines)
+        if n < TARGET_BOX_COUNT:
+            with open(label_file, "a") as f:
+                for _ in range(TARGET_BOX_COUNT - n):
+                    f.write(f"0 {dummy_bbox[0]:.6f} {dummy_bbox[1]:.6f} {dummy_bbox[2]:.6f} {dummy_bbox[3]:.6f}\n")
