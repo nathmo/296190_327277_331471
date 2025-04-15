@@ -1,5 +1,5 @@
 """
-YOLOv8-Style Object Detection Pipeline
+YOLO-Style Object Detection Model Trainer
 ======================================
 
 Assumptions & Design Choices:
@@ -8,7 +8,8 @@ Assumptions & Design Choices:
 2. Dataset:
    - Directory: `../chocolate_data/syntheticDataset`
    - YOLO format: `.jpg` images in `images/train` and `images/val`; labels in `labels/train` and `labels/val`
-   - Max ~25 chocolates/image; sizes 200-1000 px wide in original images.
+   - Image are 6000x4000 pixel (.jpg), reduce if needed
+   - Max ~25 chocolates per image; sizes 200-1000 px wide in original images. (all .txt are paded to reach 25 box)
 3. Model Input:
    - All images resized to 800x800.
    - Single detection head (not multi-scale), since object sizes are consistent.
@@ -22,7 +23,7 @@ Assumptions & Design Choices:
 6. Training:
    - From scratch, on CPU, with basic torch tools.
    - Metrics (mAP, precision, recall, confusion matrix) computed on all val images.
-   - 25 random val images used post-training for visual debug.
+   - 25 random val images used post-training for visual debug. (draw the box, class, confidence)
 7. Output:
    - Saves best model (`best.pt`) + final model each epoch.
    - Saves training loss plot and confusion matrix image.
@@ -35,267 +36,331 @@ Dependencies:
 
 """
 
-# Full implementation starts here
 
 import os
-import random
+import glob
 import time
+import random
 from pathlib import Path
-from glob import glob
-from typing import List, Tuple
 
-import cv2
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import torchvision.transforms as T
-from torchvision.ops import nms, box_iou
+import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
+from torchvision.ops import box_iou
 
 from PIL import Image
-from tqdm import tqdm
+import cv2
 import matplotlib.pyplot as plt
 import seaborn as sns
-import pandas as pd
-from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+from sklearn.metrics import confusion_matrix, precision_score, recall_score, average_precision_score
+from tqdm import tqdm
 
-# CONFIG
-DATASET_DIR = Path("../chocolate_data/syntheticDataset")
-IMG_SIZE = 800
+# Constants
 NUM_CLASSES = 13
-BATCH_SIZE = 8
-EPOCHS = 2
-DEVICE = "cpu"
-PROJECT = Path("runs/train_choco")
-NAME = "yolo_from_scratch"
-OUTPUT_DIR = PROJECT / NAME
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+ANCHORS = torch.tensor([[80, 80], [100, 100], [120, 120]], dtype=torch.float32)
+IMG_SIZE = 800
+BATCH_SIZE = 4
+NUM_EPOCHS = 20
+STRIDE = 32  # Because 800 / 25 = 32
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-ANCHORS = torch.tensor([
-    [80, 80],
-    [100, 100],
-    [120, 120]
-], dtype=torch.float)
+data_path = Path("../chocolate_data/syntheticDataset")
 
+# Utilities
+def load_labels(label_path):
+    labels = []
+    with open(label_path, 'r') as f:
+        for line in f.readlines():
+            class_id, x_center, y_center, width, height = map(float, line.strip().split())
+            labels.append([int(class_id), x_center, y_center, width, height])
+    return torch.tensor(labels)
 
-# Continuation from the previous part
+def yolo_to_xyxy(box, img_size):
+    """Convert YOLO format [x_center, y_center, w, h] to [x1, y1, x2, y2]"""
+    x_c, y_c, w, h = box
+    x1 = (x_c - w / 2) * img_size
+    y1 = (y_c - h / 2) * img_size
+    x2 = (x_c + w / 2) * img_size
+    y2 = (y_c + h / 2) * img_size
+    return torch.tensor([x1, y1, x2, y2])
 
-# Helper Functions for Dataset Loading
+# Dataset
 class ChocolateDataset(Dataset):
-    def __init__(self, img_dir: Path, label_dir: Path, img_size: int, transform=None):
-        self.img_dir = img_dir
-        self.label_dir = label_dir
-        self.img_size = img_size
-        self.transform = transform
-        self.img_paths = sorted(glob(str(img_dir / "*.jpg")))
-        self.label_paths = sorted(glob(str(label_dir / "*.txt")))
+    def __init__(self, image_dir, label_dir):
+        self.image_paths = sorted(glob.glob(f"{image_dir}/*.jpg"))
+        self.label_paths = sorted(glob.glob(f"{label_dir}/*.txt"))
+        self.transform = transforms.Compose([
+            transforms.Resize((IMG_SIZE, IMG_SIZE)),
+            transforms.ToTensor(),
+        ])
 
     def __len__(self):
-        return len(self.img_paths)
+        return len(self.image_paths)
 
     def __getitem__(self, idx):
-        img_path = self.img_paths[idx]
-        label_path = self.label_paths[idx]
+        img = Image.open(self.image_paths[idx]).convert("RGB")
+        img = self.transform(img)
+        labels = load_labels(self.label_paths[idx])
+        return img, labels
 
-        # Read Image
-        img = Image.open(img_path).convert("RGB")
-        img = img.resize((self.img_size, self.img_size))
-        img = np.array(img) / 255.0  # Normalize to [0, 1]
-
-        # Read Labels
-        labels = np.zeros((0, 5))  # No boxes by default (class + x1, y1, x2, y2)
-        if os.path.exists(label_path):
-            with open(label_path, "r") as file:
-                lines = file.readlines()
-                for line in lines:
-                    class_id, x_center, y_center, width, height = map(float, line.split())
-                    labels = np.append(labels, np.array([[class_id, x_center, y_center, width, height]]), axis=0)
-
-        labels[:, 1:] *= self.img_size  # scale coordinates to image size
-
-        if self.transform:
-            img = self.transform(img)
-
-        return torch.tensor(img, dtype=torch.float32), torch.tensor(labels, dtype=torch.float32)
-
-
-# Define the YOLOv8 Model
-class YOLOv8Model(nn.Module):
-    def __init__(self, num_classes: int, anchors: torch.Tensor):
-        super(YOLOv8Model, self).__init__()
-        self.num_classes = num_classes
-        self.anchors = anchors
-
-        # Backbone (simplified for this example, normally you would use something like CSPDarknet)
-        self.backbone = torch.nn.Sequential(
-            torch.nn.Conv2d(3, 32, 3, padding=1),
-            torch.nn.ReLU(),
-            torch.nn.Conv2d(32, 64, 3, padding=1),
-            torch.nn.ReLU(),
-            torch.nn.MaxPool2d(2, 2)
+# Model
+class SimpleYOLO(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.backbone = nn.Sequential(
+            nn.Conv2d(3, 16, 3, stride=1, padding=1), nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Conv2d(16, 32, 3, stride=1, padding=1), nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Conv2d(32, 64, 3, stride=1, padding=1), nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Conv2d(64, 128, 3, stride=1, padding=1), nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Conv2d(128, 256, 3, stride=1, padding=1), nn.ReLU(),
+            nn.MaxPool2d(2),
         )
-
-        # Detection head
-        self.head = torch.nn.Conv2d(64, (len(anchors) * (5 + num_classes)), 1)
+        self.head = nn.Conv2d(256, len(ANCHORS) * (5 + NUM_CLASSES), 1)
 
     def forward(self, x):
         x = self.backbone(x)
         x = self.head(x)
         return x
 
+# Loss
+class YOLOLoss(nn.Module):
+    def __init__(self, anchors, num_classes, img_size, stride):
+        super().__init__()
+        self.anchors = anchors.to(DEVICE)  # shape: [A, 2] (w, h)
+        self.num_anchors = anchors.shape[0]
+        self.num_classes = num_classes
+        self.bce = nn.BCEWithLogitsLoss()
+        self.ciou = CIOULoss()
+        self.img_size = img_size
+        self.stride = stride  # usually img_size / output_size
 
-# Loss Function (CIoU, BCE for Objectness, BCE for Classification)
-def compute_loss(preds, targets, anchors, num_classes):
+    def forward(self, preds, targets):
+        """
+        preds: [B, A*(5+num_classes), S, S]
+        targets: list of [N_i, 5], for each image (cls, x, y, w, h) normalized
+        """
+
+        B, _, S, _ = preds.shape
+        preds = preds.view(B, self.num_anchors, 5 + self.num_classes, S, S).permute(0, 1, 3, 4, 2).contiguous()
+        # Shape: [B, A, S, S, 5 + num_classes]
+
+        obj_mask = torch.zeros((B, self.num_anchors, S, S), dtype=torch.bool, device=DEVICE)
+        noobj_mask = torch.ones_like(obj_mask, dtype=torch.bool)
+        tx = torch.zeros((B, self.num_anchors, S, S), device=DEVICE)
+        ty = torch.zeros_like(tx)
+        tw = torch.zeros_like(tx)
+        th = torch.zeros_like(tx)
+        tconf = torch.zeros_like(tx)
+        tcls = torch.zeros((B, self.num_anchors, S, S, self.num_classes), device=DEVICE)
+
+        for b in range(B):
+            for tgt in targets[b]:  # each: [cls, x, y, w, h]
+                cls, x, y, w, h = tgt
+                gx, gy = x * S, y * S
+                gi, gj = int(gx), int(gy)
+
+                box = torch.tensor([0, 0, w * self.img_size, h * self.img_size], device=DEVICE).unsqueeze(0)
+                anchor_boxes = torch.cat([torch.zeros_like(self.anchors), self.anchors], dim=1)
+                ious = box_iou(box, anchor_boxes)[0]  # shape: [A]
+
+                best_a = torch.argmax(ious).item()
+                obj_mask[b, best_a, gj, gi] = 1
+                noobj_mask[b, best_a, gj, gi] = 0
+
+                tx[b, best_a, gj, gi] = gx - gi
+                ty[b, best_a, gj, gi] = gy - gj
+                tw[b, best_a, gj, gi] = torch.log(w * self.img_size / self.anchors[best_a][0] + 1e-7)
+                th[b, best_a, gj, gi] = torch.log(h * self.img_size / self.anchors[best_a][1] + 1e-7)
+                tconf[b, best_a, gj, gi] = 1
+                tcls[b, best_a, gj, gi, int(cls)] = 1
+
+        # Decode predictions
+        pred_x = torch.sigmoid(preds[..., 0])
+        pred_y = torch.sigmoid(preds[..., 1])
+        pred_w = preds[..., 2]
+        pred_h = preds[..., 3]
+        pred_conf = preds[..., 4]
+        pred_cls = preds[..., 5:]
+
+        # Reconstruct box in pixel coords
+        grid_x = torch.arange(S, device=DEVICE).repeat(S, 1).view([1, 1, S, S])
+        grid_y = torch.arange(S, device=DEVICE).repeat(S, 1).t().view([1, 1, S, S])
+        grid_x = grid_x.to(DEVICE)
+        grid_y = grid_y.to(DEVICE)
+
+        anchor_w = self.anchors[:, 0].view(1, -1, 1, 1)
+        anchor_h = self.anchors[:, 1].view(1, -1, 1, 1)
+
+        pred_boxes = torch.zeros((B, self.num_anchors, S, S, 4), device=DEVICE)
+        pred_boxes[..., 0] = (pred_x + grid_x) * self.stride
+        pred_boxes[..., 1] = (pred_y + grid_y) * self.stride
+        pred_boxes[..., 2] = anchor_w * torch.exp(pred_w)
+        pred_boxes[..., 3] = anchor_h * torch.exp(pred_h)
+
+        # Targets to boxes (x_center, y_center, w, h) to (x1, y1, x2, y2)
+        pred_xyxy = torch.zeros_like(pred_boxes)
+        pred_xyxy[..., 0] = pred_boxes[..., 0] - pred_boxes[..., 2] / 2
+        pred_xyxy[..., 1] = pred_boxes[..., 1] - pred_boxes[..., 3] / 2
+        pred_xyxy[..., 2] = pred_boxes[..., 0] + pred_boxes[..., 2] / 2
+        pred_xyxy[..., 3] = pred_boxes[..., 1] + pred_boxes[..., 3] / 2
+
+        tgt_xyxy = torch.zeros_like(pred_xyxy)
+        for b in range(B):
+            tgt_boxes = []
+            for tgt in targets[b]:
+                _, x, y, w, h = tgt
+                x *= self.img_size
+                y *= self.img_size
+                w *= self.img_size
+                h *= self.img_size
+                tgt_boxes.append([x - w / 2, y - h / 2, x + w / 2, y + h / 2])
+            if tgt_boxes:
+                tgt_xyxy[b][obj_mask[b]] = torch.tensor(tgt_boxes, device=DEVICE)
+
+        # Losses
+        loss_ciou = self.ciou(pred_xyxy[obj_mask], tgt_xyxy[obj_mask])
+        loss_conf_obj = self.bce(pred_conf[obj_mask], tconf[obj_mask])
+        loss_conf_noobj = self.bce(pred_conf[noobj_mask], tconf[noobj_mask])
+        loss_cls = self.bce(pred_cls[obj_mask], tcls[obj_mask])
+
+        total_loss = loss_ciou + loss_conf_obj + 0.5 * loss_conf_noobj + loss_cls
+        return total_loss
+
+
+class CIOULoss(nn.Module):
+    def forward(self, pred_boxes, target_boxes):
+        # Input: [N, 4] format: [x1, y1, x2, y2]
+        pred_x1, pred_y1, pred_x2, pred_y2 = pred_boxes[:, 0], pred_boxes[:, 1], pred_boxes[:, 2], pred_boxes[:, 3]
+        target_x1, target_y1, target_x2, target_y2 = target_boxes[:, 0], target_boxes[:, 1], target_boxes[:, 2], target_boxes[:, 3]
+
+        # Intersection box
+        inter_x1 = torch.max(pred_x1, target_x1)
+        inter_y1 = torch.max(pred_y1, target_y1)
+        inter_x2 = torch.min(pred_x2, target_x2)
+        inter_y2 = torch.min(pred_y2, target_y2)
+        inter_area = (inter_x2 - inter_x1).clamp(0) * (inter_y2 - inter_y1).clamp(0)
+
+        # Union
+        pred_area = (pred_x2 - pred_x1).clamp(0) * (pred_y2 - pred_y1).clamp(0)
+        target_area = (target_x2 - target_x1).clamp(0) * (target_y2 - target_y1).clamp(0)
+        union_area = pred_area + target_area - inter_area + 1e-7
+        iou = inter_area / union_area
+
+        # Centers
+        pred_cx = (pred_x1 + pred_x2) / 2
+        pred_cy = (pred_y1 + pred_y2) / 2
+        target_cx = (target_x1 + target_x2) / 2
+        target_cy = (target_y1 + target_y2) / 2
+
+        center_dist = (pred_cx - target_cx) ** 2 + (pred_cy - target_cy) ** 2
+
+        # Enclosing box
+        enc_x1 = torch.min(pred_x1, target_x1)
+        enc_y1 = torch.min(pred_y1, target_y1)
+        enc_x2 = torch.max(pred_x2, target_x2)
+        enc_y2 = torch.max(pred_y2, target_y2)
+        enc_diag = (enc_x2 - enc_x1) ** 2 + (enc_y2 - enc_y1) ** 2 + 1e-7
+
+        # Aspect ratio consistency
+        pred_w = (pred_x2 - pred_x1).clamp(1e-7)
+        pred_h = (pred_y2 - pred_y1).clamp(1e-7)
+        target_w = (target_x2 - target_x1).clamp(1e-7)
+        target_h = (target_y2 - target_y1).clamp(1e-7)
+
+        v = (4 / (np.pi ** 2)) * (torch.atan(target_w / target_h) - torch.atan(pred_w / pred_h)) ** 2
+        with torch.no_grad():
+            alpha = v / (1 - iou + v + 1e-7)
+
+        ciou = iou - (center_dist / enc_diag) - alpha * v
+        return 1 - ciou.mean()
+
+def collate_fn(batch):
     """
-    Compute YOLO-style loss: CIoU for boxes + BCE for objectness and class prediction.
+    Custom collate function for YOLO-style object detection.
+
+    Input:
+        batch: list of tuples (image_tensor, target_tensor)
+            - image_tensor: [3, H, W]
+            - target_tensor: [N_objects, 5] — (cls, x, y, w, h), all normalized
+
+    Output:
+        images: [B, 3, H, W]
+        targets: list of [N_objects, 5] tensors (each for one image)
     """
-    # Shape: (batch_size, grid_size, grid_size, num_anchors * (5 + num_classes))
-    pred_boxes = preds[..., :4]
-    pred_obj = preds[..., 4:5]
-    pred_class = preds[..., 5:]
+    images = []
+    targets = []
 
-    target_boxes = targets[..., 1:5]
-    target_obj = targets[..., 0:1]
-    target_class = targets[..., 5:]
+    for img, target in batch:
+        images.append(img)
+        targets.append(target)
 
-    # CIoU Loss (for boxes)
-    ciou_loss = ciou(pred_boxes, target_boxes)
-
-    # BCE Loss for objectness
-    obj_loss = F.binary_cross_entropy_with_logits(pred_obj, target_obj)
-
-    # BCE Loss for classification
-    class_loss = F.binary_cross_entropy_with_logits(pred_class, target_class)
-
-    return ciou_loss + obj_loss + class_loss
-
-
-def ciou(pred_boxes, target_boxes):
-    """
-    CIoU loss implementation for bounding boxes
-    """
-    x1, y1, x2, y2 = pred_boxes.split(1, dim=-1)
-    tx1, ty1, tx2, ty2 = target_boxes.split(1, dim=-1)
-
-    # Compute area
-    area_pred = (x2 - x1) * (y2 - y1)
-    area_target = (tx2 - tx1) * (ty2 - ty1)
-
-    # Compute intersection area
-    inter_x1 = torch.max(x1, tx1)
-    inter_y1 = torch.max(y1, ty1)
-    inter_x2 = torch.min(x2, tx2)
-    inter_y2 = torch.min(y2, ty2)
-
-    inter_area = torch.clamp(inter_x2 - inter_x1, min=0) * torch.clamp(inter_y2 - inter_y1, min=0)
-
-    union_area = area_pred + area_target - inter_area
-
-    # IoU
-    iou = inter_area / (union_area + 1e-6)
-
-    # Center distance term
-    center_pred = (x1 + x2) / 2, (y1 + y2) / 2
-    center_target = (tx1 + tx2) / 2, (ty1 + ty2) / 2
-    center_dist = (center_pred[0] - center_target[0]) ** 2 + (center_pred[1] - center_target[1]) ** 2
-
-    # Aspect ratio term
-    w_pred = x2 - x1
-    h_pred = y2 - y1
-    w_target = tx2 - tx1
-    h_target = ty2 - ty1
-    aspect_ratio_loss = 1 - torch.min(w_pred / w_target, h_pred / h_target)
-
-    # CIoU loss
-    ciou = iou - (center_dist / (torch.max(w_pred, h_pred) + 1e-6)) - (aspect_ratio_loss / (1.0 + aspect_ratio_loss))
-
-    return 1 - ciou
+    images = torch.stack(images, dim=0)
+    return images, targets
 
 
 # Training Loop
-def train_one_epoch(model, dataloader, optimizer, criterion, device):
-    model.train()
-    total_loss = 0
-    for imgs, labels in tqdm(dataloader, desc="Training Epoch"):
-        imgs, labels = imgs.to(device), labels.to(device)
-        optimizer.zero_grad()
-        preds = model(imgs)
-        loss = compute_loss(preds, labels, ANCHORS, NUM_CLASSES)
-        loss.backward()
-        optimizer.step()
-        total_loss += loss.item()
-    return total_loss / len(dataloader)
 
+def train():
+    train_ds = ChocolateDataset(data_path / "images/train", data_path / "labels/train")
+    val_ds = ChocolateDataset(data_path / "images/val", data_path / "labels/val")
 
-# Validation Loop + mAP, Confusion Matrix
-def validate(model, dataloader, device):
-    model.eval()
-    all_preds, all_labels = [], []
+    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate_fn)
+    val_loader = DataLoader(val_ds, batch_size=1, collate_fn=collate_fn)
 
-    with torch.no_grad():
-        for imgs, labels in tqdm(dataloader, desc="Validating"):
-            imgs, labels = imgs.to(device), labels.to(device)
-            preds = model(imgs)
-            all_preds.append(preds.cpu())
-            all_labels.append(labels.cpu())
+    model = SimpleYOLO().to(DEVICE)
 
-    # Compute mAP and confusion matrix
-    preds = torch.cat(all_preds, dim=0)
-    labels = torch.cat(all_labels, dim=0)
+    optimizer = optim.Adam(model.parameters(), lr=1e-4)
 
-    # Here, we'll mock the mAP computation (real YOLOv8 would need NMS)
-    # Placeholder confusion matrix: Assuming class indices 0–12
-    pred_classes = preds.argmax(dim=-1)
-    true_classes = labels[:, 0].long()
+    anchors = torch.tensor([[80, 80], [100, 100], [120, 120]], dtype=torch.float32)
+    criterion = YOLOLoss(anchors=anchors,
+                         num_classes=NUM_CLASSES,
+                         img_size=IMG_SIZE,
+                         stride=IMG_SIZE // (IMG_SIZE // STRIDE)).to(DEVICE)
 
-    cm = confusion_matrix(true_classes, pred_classes, labels=list(range(NUM_CLASSES)))
-    cm_display = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=[f"Class {i}" for i in range(NUM_CLASSES)])
+    best_loss = float('inf')
+    loss_history = []
 
-    return cm_display
+    for epoch in range(NUM_EPOCHS):
+        model.train()
+        epoch_loss = 0
 
+        for imgs, targets in tqdm(train_loader, desc=f"Epoch {epoch+1}"):
+            imgs = imgs.to(DEVICE)
+            targets = [t.to(DEVICE) for t in targets]  # List of [N_i, 5] tensors (cls, x, y, w, h)
 
-# Main Training Loop
-def train(model, train_loader, val_loader, optimizer, criterion, device, epochs=EPOCHS):
-    best_model_wts = None
-    best_val_loss = float("inf")
+            preds = model(imgs)  # Output shape: [B, A*(5+num_classes), S, S]
 
-    for epoch in range(epochs):
-        print(f"Epoch {epoch + 1}/{epochs}")
+            loss = criterion(preds, targets)
 
-        train_loss = train_one_epoch(model, train_loader, optimizer, criterion, device)
-        print(f"Training Loss: {train_loss:.4f}")
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-        cm_display = validate(model, val_loader, device)
-        cm_display.plot(cmap='Blues')
-        plt.savefig(OUTPUT_DIR / f"confusion_matrix_epoch_{epoch + 1}.png")
+            epoch_loss += loss.item()
 
-        # Save model if it's the best validation loss
-        if train_loss < best_val_loss:
-            best_val_loss = train_loss
-            best_model_wts = model.state_dict()
+        avg_loss = epoch_loss / len(train_loader)
+        loss_history.append(avg_loss)
+        print(f"Epoch {epoch+1} Loss: {avg_loss:.4f}")
 
-        # Save model after each epoch
-        torch.save(model.state_dict(), OUTPUT_DIR / f"model_epoch_{epoch + 1}.pt")
+        if avg_loss < best_loss:
+            best_loss = avg_loss
+            torch.save(model.state_dict(), "best.pt")
 
-    # Save the best model
-    torch.save(best_model_wts, OUTPUT_DIR / "best_model.pt")
+        torch.save(model.state_dict(), f"epoch_{epoch+1}.pt")
 
+    # Save loss curve
+    plt.plot(loss_history)
+    plt.title("Training Loss")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.savefig("loss_plot.png")
 
-# Main Execution
-if __name__ == "__main__":
-    # Prepare dataset
-    transform = T.Compose([T.ToTensor()])
-    train_dataset = ChocolateDataset(DATASET_DIR / "images/train", DATASET_DIR / "labels/train", IMG_SIZE, transform)
-    val_dataset = ChocolateDataset(DATASET_DIR / "images/val", DATASET_DIR / "labels/val", IMG_SIZE, transform)
-
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
-
-    # Model, Optimizer, Loss function
-    model = YOLOv8Model(NUM_CLASSES, ANCHORS).to(DEVICE)
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-    criterion = compute_loss
-
-    # Train the model
-    train(model, train_loader, val_loader, optimizer, criterion, DEVICE)
+if __name__ == '__main__':
+    train()

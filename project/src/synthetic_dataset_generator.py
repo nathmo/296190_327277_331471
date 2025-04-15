@@ -79,7 +79,7 @@ import numpy as np
 from tqdm import tqdm
 
 # Configurations
-NUM_IMAGES = 1000
+NUM_IMAGES = 2000
 SCALING_FACTOR = 1.0  # Set to <1.0 to downscale final output
 SAVE_DIR = Path("../chocolate_data/syntheticDataset")
 IMAGE_DIR = SAVE_DIR / "images"
@@ -107,19 +107,19 @@ CHOCOLATE_CLASSES = {
 }
 
 rescale_factors = {
-    "Amandina": (0.4, 1.0),
-    "Arabia": (1.0, 1.0),
-    "Comtesse": (1.0, 1.0),
-    "Crème_brulée": (1.0, 0.9),
-    "Jelly_White": (0.67, 1.0),
-    "Jelly_Milk": (0.67, 1.0),
-    "Jelly_Black": (0.67, 1.0),
-    "Noblesse": (1.0, 1.0),
-    "Noir_authentique": (1.0, 1.0),
-    "Passion_au_lait": (1.0, 0.75),
-    "Stracciatella": (1.0, 1.0),
-    "Tentation_noir": (1.0, 0.85),
-    "Triangolo": (1.0, 0.8)
+    "Amandina": (1, 1),
+    "Arabia": (0.7, 0.7),
+    "Comtesse": (0.7, 0.7),
+    "Crème_brulée": (0.5, 0.5),
+    "Jelly_White": (0.5, 0.5),
+    "Jelly_Milk": (0.5, 0.5),
+    "Jelly_Black": (0.5, 0.5),
+    "Noblesse": (0.7, 0.7),
+    "Noir_authentique": (0.7, 0.7),
+    "Passion_au_lait": (0.7, 0.7),
+    "Stracciatella": (0.7, 0.7),
+    "Tentation_noir": (0.7, 0.7),
+    "Triangolo": (0.7, 0.7)
 }
 
 
