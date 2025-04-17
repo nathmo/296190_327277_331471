@@ -136,6 +136,29 @@ class YOLOLoss(nn.Module):
 # -------------------------------
 # 4. model implementation
 # -------------------------------
+"""
+S → Grid Size
+    Represents how the input image is divided into a grid.
+    For example, S = 7 means the image is split into a 7×7 grid (49 cells total).
+    Each grid cell is responsible for predicting objects whose centers fall inside it.
+    If your input image is 448×448 and S=7, then each grid cell represents a 64×64 pixel region (448 / 7 = 64).
+    (we scale down 6000x4000 to 448x300 (padded to 448) -> Chocolate are 300 to 1000px -> 22-74px
+
+B → Number of Bounding Boxes per Grid Cell
+    Each cell predicts B bounding boxes — that is, B separate predictions for possible objects in that cell.
+    Each bounding box includes 5 values:
+        x, y → center of the box (relative to the cell)
+        w, h → width and height of the box (relative to the image)
+        confidence → how likely the box contains an object
+    Typical value: B = 2 (YOLOv1 default)
+    (unless they stack the narrow chocolate next to one another we are good)
+
+C → Number of Classes
+    The total number of object categories the model is trained to detect.
+    For each grid cell, the model predicts a classification score (usually a probability) for each of the C classes.
+    If you're training to detect 13 types of chocolate bars, then C = 13.
+
+"""
 class YOLOv1TinyCNN(nn.Module):
     def __init__(self, S=7, B=2, C=13):
         super(YOLOv1TinyCNN, self).__init__()
@@ -173,10 +196,11 @@ class YOLOv1TinyCNN(nn.Module):
             nn.LeakyReLU(0.1)
         )
 
-        # Detection head: 7x7x(5*B + C) output
+        # Detection head: SxSx(5*B + C) output
+        #  5=(x,y,w,h,confidence)
         self.classifier = nn.Sequential(
             nn.Flatten(),                      # → [batch_size, 7*7*1024]
-            nn.Linear(7 * 7 * 1024, 4096),
+            nn.Linear(S * S * 1024, 4096), # 1024 from previous nn.Conv2d, 4096 from yolo paper
             nn.LeakyReLU(0.1),
             nn.Dropout(0.5),
             nn.Linear(4096, S * S * (B * 5 + C))
