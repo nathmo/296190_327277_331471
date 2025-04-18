@@ -79,7 +79,7 @@ import numpy as np
 from tqdm import tqdm
 
 # Configurations
-NUM_IMAGES = 2000
+NUM_IMAGES = 10000
 SCALING_FACTOR = 1.0  # Set to <1.0 to downscale final output
 SAVE_DIR = Path("../chocolate_data/syntheticDataset")
 IMAGE_DIR = SAVE_DIR / "images"
