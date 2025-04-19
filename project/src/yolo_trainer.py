@@ -165,51 +165,46 @@ class YOLOv1TinyCNN(nn.Module):
         self.S = S
         self.B = B
         self.C = C
+        out_channels = B * 5 + C  # total predictions per cell
 
-        # Feature extractor backbone (simplified Tiny-YOLO style)
+        # Feature extractor (narrower than before)
         self.features = nn.Sequential(
-            nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1),  # 448x448x3 → 448x448x16
+            nn.Conv2d(3, 16, 3, 1, 1),    # → 448x448x16
             nn.LeakyReLU(0.1),
-            nn.MaxPool2d(2, 2),                                     # → 224x224x16
+            nn.MaxPool2d(2),              # → 224x224x16
 
-            nn.Conv2d(16, 32, 3, 1, 1),
+            nn.Conv2d(16, 32, 3, 1, 1),   # → 224x224x32
             nn.LeakyReLU(0.1),
-            nn.MaxPool2d(2, 2),                                     # → 112x112x32
+            nn.MaxPool2d(2),              # → 112x112x32
 
-            nn.Conv2d(32, 64, 3, 1, 1),
+            nn.Conv2d(32, 64, 3, 1, 1),   # → 112x112x64
             nn.LeakyReLU(0.1),
-            nn.MaxPool2d(2, 2),                                     # → 56x56x64
+            nn.MaxPool2d(2),              # → 56x56x64
 
-            nn.Conv2d(64, 128, 3, 1, 1),
+            nn.Conv2d(64, 128, 3, 1, 1),  # → 56x56x128
             nn.LeakyReLU(0.1),
-            nn.MaxPool2d(2, 2),                                     # → 28x28x128
+            nn.MaxPool2d(2),              # → 28x28x128
 
-            nn.Conv2d(128, 256, 3, 1, 1),
+            nn.Conv2d(128, 256, 3, 1, 1), # → 28x28x256
             nn.LeakyReLU(0.1),
-            nn.MaxPool2d(2, 2),                                     # → 14x14x256
+            nn.MaxPool2d(2),              # → 14x14x256
 
-            nn.Conv2d(256, 512, 3, 1, 1),
+            nn.Conv2d(256, 256, 3, 1, 1), # → 14x14x256
             nn.LeakyReLU(0.1),
-            nn.MaxPool2d(2, 2),                                     # → 7x7x512
-
-            nn.Conv2d(512, 1024, 3, 1, 1),
-            nn.LeakyReLU(0.1)
+            nn.MaxPool2d(2),              # → 7x7x256
         )
 
-        # Detection head: SxSx(5*B + C) output
-        #  5=(x,y,w,h,confidence)
-        self.classifier = nn.Sequential(
-            nn.Flatten(),                      # → [batch_size, 7*7*1024]
-            nn.Linear(S * S * 1024, 4096), # 1024 from previous nn.Conv2d, 4096 from yolo paper
+        # Detection head (Conv instead of FC)
+        self.head = nn.Sequential(
+            nn.Conv2d(256, 128, 3, 1, 1),     # → 7x7x128
             nn.LeakyReLU(0.1),
-            nn.Dropout(0.5),
-            nn.Linear(4096, S * S * (B * 5 + C))
+            nn.Conv2d(128, out_channels, 1),  # → 7x7x(5*B + C)
         )
 
     def forward(self, x):
         x = self.features(x)
-        x = self.classifier(x)
-        x = x.view(-1, self.S, self.S, self.B * 5 + self.C)
+        x = self.head(x)
+        x = x.permute(0, 2, 3, 1)  # → [batch, S, S, 5*B+C]
         return x
 
 
@@ -312,18 +307,33 @@ def main():
     output_dir = "./predictions"
 
     S, B, C = 7, 2, 13
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print("torch.cuda.is_available() : "+str(torch.cuda.is_available()))
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu") #
     model = YOLOv1TinyCNN(S=S, B=B, C=C).to(device)
     loss_fn = YOLOLoss(S=S, B=B, C=C)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+    print("")
 
     train_dataset = YOLODataset(image_train, label_train, S=S, B=B, C=C)
     val_dataset = YOLODataset(image_val, label_val, S=S, B=B, C=C)
-    train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=1)
+
+    print(torch.cuda.memory_allocated() / 1024 ** 2, "MB allocated")
+    print(torch.cuda.memory_reserved() / 1024 ** 2, "MB reserved")
+    print("Model running on:", next(model.parameters()).device)
+    print("")
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"Total parameters: {total_params:,}")
+    print(f"Trainable parameters: {trainable_params:,}")
+    print("----------------------------------------------------")
 
     train_losses, val_losses = [], []
     for epoch in range(100):
+        print(torch.cuda.memory_allocated() / 1024 ** 2, "MB allocated")
+        print(torch.cuda.memory_reserved() / 1024 ** 2, "MB reserved")
+        print("Model running on:", next(model.parameters()).device)
         train_loss = train_one_epoch(model, train_loader, optimizer, loss_fn, device)
         val_loss = evaluate(model, val_loader, loss_fn, device)
         train_losses.append(train_loss)
