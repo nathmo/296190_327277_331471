@@ -215,15 +215,24 @@ class YOLOv1TinyCNN(nn.Module):
 def train_one_epoch(model, dataloader, optimizer, loss_fn, device):
     model.train()
     total_loss = 0
-    for imgs, targets in tqdm(dataloader, desc="Training"):
+    pbar = tqdm(dataloader, desc="Training", dynamic_ncols=True)
+
+    for imgs, targets in pbar:
         imgs, targets = imgs.to(device), targets.to(device)
         preds = model(imgs)
         loss = loss_fn(preds, targets)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        total_loss += loss.item()
+
+        batch_loss = loss.item()
+        total_loss += batch_loss
+
+        # Update progress bar with current loss
+        pbar.set_postfix(loss=f"{batch_loss:.4f}")
+
     return total_loss / len(dataloader)
+
 
 # -------------------------------
 # 6. Evaluate
@@ -244,35 +253,70 @@ def evaluate(model, dataloader, loss_fn, device):
 # 7. Visualize Predictions
 # -------------------------------
 
-def visualize_predictions(model, dataloader, output_dir, epoch, S=7, B=2, C=13, conf_thresh=0.4):
-    os.makedirs(f"{output_dir}/epoch_{epoch}", exist_ok=True)
+def visualize_predictions(model_path, dataloader, output_dir, epoch, build_model_fn, S=7, B=2, C=13, conf_thresh=0.4, input_size=448):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Loading model on {device}")
+
+    # Step 1: Instantiate the model
+    model = build_model_fn().to(device)
+
+    # Step 2: Load weights into that model
+    state_dict = torch.load(model_path, map_location=device)
+    model.load_state_dict(state_dict)
+
     model.eval()
+
+    os.makedirs(f"{output_dir}/epoch_{epoch}", exist_ok=True)
     font = ImageFont.load_default()
+
+    sampled_data = random.sample(list(dataloader), 10)
+    pbar = tqdm(sampled_data, desc="Visualizing Predictions", dynamic_ncols=True)
+
     with torch.no_grad():
-        for i, (img, _) in enumerate(random.sample(list(dataloader), 10)):
-            img = img.to(next(model.parameters()).device).unsqueeze(0)
+        for i, (img, _) in enumerate(pbar):
+            img = img.to(device)
             pred = model(img)[0].cpu()
+
             orig_img = transforms.ToPILImage()(img.squeeze().cpu())
             draw = ImageDraw.Draw(orig_img)
             cell_size = 1 / S
+
             for row in range(S):
                 for col in range(S):
                     for b in range(B):
                         conf = pred[row, col, b * 5 + 4]
                         if conf > conf_thresh:
                             x, y, w, h = pred[row, col, b * 5: b * 5 + 4]
+
+                            if any(torch.isnan(torch.tensor([x, y, w, h]))):  # sanity check
+                                continue
+
+                            # Clamp width/height to positive range
+                            w = max(w.item(), 1e-6)
+                            h = max(h.item(), 1e-6)
+
                             cx = (col + x.item()) * cell_size
                             cy = (row + y.item()) * cell_size
-                            box_w = w.item()
-                            box_h = h.item()
-                            xmin = int((cx - box_w / 2) * 448)
-                            ymin = int((cy - box_h / 2) * 448)
-                            xmax = int((cx + box_w / 2) * 448)
-                            ymax = int((cy + box_h / 2) * 448)
+                            box_w = w
+                            box_h = h
+
+                            xmin = int((cx - box_w / 2) * input_size)
+                            ymin = int((cy - box_h / 2) * input_size)
+                            xmax = int((cx + box_w / 2) * input_size)
+                            ymax = int((cy + box_h / 2) * input_size)
+
+                            # Final sanity check before drawing
+                            if xmin >= xmax or ymin >= ymax:
+                                continue
+
                             cls_id = pred[row, col, B * 5:].argmax().item()
                             draw.rectangle([xmin, ymin, xmax, ymax], outline="blue", width=2)
                             draw.text((xmin, ymin), f"{cls_id}:{conf:.2f}", fill="white", font=font)
+
             orig_img.save(f"{output_dir}/epoch_{epoch}/img_{i}.png")
+
+
+
 
 # -------------------------------
 # 7. Save Model
@@ -316,7 +360,7 @@ def main():
 
     train_dataset = YOLODataset(image_train, label_train, S=S, B=B, C=C)
     val_dataset = YOLODataset(image_val, label_val, S=S, B=B, C=C)
-    train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=6, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=1)
 
     print(torch.cuda.memory_allocated() / 1024 ** 2, "MB allocated")
@@ -336,10 +380,12 @@ def main():
         print("Model running on:", next(model.parameters()).device)
         train_loss = train_one_epoch(model, train_loader, optimizer, loss_fn, device)
         val_loss = evaluate(model, val_loader, loss_fn, device)
+        print("train_loss " + str(train_loss))
+        print("val_loss " + str(val_loss))
         train_losses.append(train_loss)
         val_losses.append(val_loss)
         save_model(model, f"model_epoch_{epoch}.pth")
-        visualize_predictions(model, val_loader, output_dir, epoch)
+        visualize_predictions(f"model_epoch_{epoch}.pth", val_loader, output_dir, epoch, build_model_fn=lambda: YOLOv1TinyCNN(S=S, B=B, C=C), S=S, B=B, C=C)
     plot_loss(train_losses, val_losses)
 
 if __name__ == "__main__":
