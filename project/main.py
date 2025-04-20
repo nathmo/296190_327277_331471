@@ -1,70 +1,144 @@
 import os
+import torch
 import pandas as pd
 from tqdm import tqdm
-from PIL import Image
-import torch
+from PIL import Image, ImageDraw, ImageFont
 import torchvision.transforms as T
+from torchvision.ops import nms
+import numpy as np
+from src.yolo_trainer import YOLOv1TinyCNN  # adjust if needed
 
 # === CONFIGURATION ===
-MODEL_PATH = "runs/train_choco/yolov8_choco_exp/weights/best_torch.pt"
-IMAGE_DIR = "project/chocolate_data/dataset_project_iapr2025/test"
-OUTPUT_CSV_PATH = "predictions_test.csv"
+MODEL_PATH = "src/checkpoint/model_epoch_25.pth"
+IMAGE_DIR = "chocolate_data/dataset_project_iapr2025/test"
+OUTPUT_CSV_PATH = "submission.csv"
+OUTPUT_IMG_DIR = "inference"
 
 CLASS_NAMES = ['Jelly White', 'Jelly Milk', 'Jelly Black', 'Amandina', 'Crème brulée', 'Triangolo',
                'Tentation noir', 'Comtesse', 'Noblesse', 'Noir authentique', 'Passion au lait',
                'Arabia', 'Stracciatella']
 
-IMG_SIZE = 800  # adjust depending on your model’s input size
-CONF_THRESHOLD = 0.25
+S = 7  # grid size
+B = 2  # number of boxes
+C = 13  # number of classes
+CONF_THRESH = 0.6
+INPUT_SIZE = 448
 
-# === Load model ===
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = torch.jit.load(MODEL_PATH, map_location=device)
-model.eval()
+# === SETUP ===
+os.makedirs(OUTPUT_IMG_DIR, exist_ok=True)
+font = ImageFont.load_default()
 
-# === Image transformation ===
+# === MODEL LOADER ===
+def load_model(model_path):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = YOLOv1TinyCNN(S=S, B=B, C=C).to(device)
+    state_dict = torch.load(model_path, map_location=device)
+    model.load_state_dict(state_dict)
+    model.eval()
+    return model, device
+
+# === TRANSFORM ===
 transform = T.Compose([
-    T.Resize((IMG_SIZE, IMG_SIZE)),
+    T.Resize((INPUT_SIZE, INPUT_SIZE)),
     T.ToTensor(),
 ])
 
-# === List of image paths ===
-image_files = [f for f in os.listdir(IMAGE_DIR) if f.endswith(".JPG")]
-
-# === Inference & Counting ===
-results = []
-
-for img_file in tqdm(image_files, desc="Running inference"):
-    img_id = img_file.replace("L", "").replace(".JPG", "")
-    img_path = os.path.join(IMAGE_DIR, img_file)
-
-    # Load and preprocess image
-    img = Image.open(img_path).convert("RGB")
-    img_tensor = transform(img).unsqueeze(0).to(device)
-
-    # Inference
+# === INFERENCE WITH DRAWING ===
+def predict_and_draw(model, device, image, filename):
+    image_tensor = transform(image).unsqueeze(0).to(device)
     with torch.no_grad():
-        preds = model(img_tensor)[0]  # Shape: (N, 6)
+        output = model(image_tensor)[0].cpu()
 
-    # Initialize class counts
-    class_counts = {i: 0 for i in range(len(CLASS_NAMES))}
+    draw_img = image.resize((INPUT_SIZE, INPUT_SIZE)).copy()
+    draw = ImageDraw.Draw(draw_img)
+    cell_size = 1 / S
 
-    if preds is not None and len(preds) > 0:
-        for det in preds:
-            if det.shape[0] < 6:
+    boxes = []
+    scores = []
+    class_ids = []
+
+    # === Collect all boxes first ===
+    for row in range(S):
+        for col in range(S):
+            for b in range(B):
+                conf = output[row, col, b * 5 + 4]
+                if conf > CONF_THRESH:
+                    x, y, w, h = output[row, col, b * 5: b * 5 + 4]
+                    if any(torch.isnan(torch.tensor([x, y, w, h]))):
+                        continue
+                    cls_id = output[row, col, B * 5:].argmax().item()
+
+                    cx = (col + x.item()) * cell_size
+                    cy = (row + y.item()) * cell_size
+                    box_w = w.item()
+                    box_h = h.item()
+
+                    xmin = (cx - box_w / 2) * INPUT_SIZE
+                    ymin = (cy - box_h / 2) * INPUT_SIZE
+                    xmax = (cx + box_w / 2) * INPUT_SIZE
+                    ymax = (cy + box_h / 2) * INPUT_SIZE
+
+                    if xmax <= xmin or ymax <= ymin:
+                        continue
+
+                    boxes.append([xmin, ymin, xmax, ymax])
+                    scores.append(conf.item())
+                    class_ids.append(cls_id)
+
+    # === Apply NMS ===
+    if boxes:
+        boxes = torch.tensor(boxes)
+        scores = torch.tensor(scores)
+        class_ids = torch.tensor(class_ids)
+
+        keep = nms(boxes, scores, iou_threshold=0.4)
+
+        counts = np.zeros(C, dtype=int)
+        for idx in keep:
+            xmin, ymin, xmax, ymax = boxes[idx].tolist()
+            xmin = max(0, min(INPUT_SIZE, int(xmin)))
+            ymin = max(0, min(INPUT_SIZE, int(ymin)))
+            xmax = max(0, min(INPUT_SIZE, int(xmax)))
+            ymax = max(0, min(INPUT_SIZE, int(ymax)))
+
+            if (xmax - xmin) < 2 or (ymax - ymin) < 2:
                 continue
-            conf = det[4].item()
-            cls_id = int(det[5].item())
-            if conf >= CONF_THRESHOLD and 0 <= cls_id < len(CLASS_NAMES):
-                class_counts[cls_id] += 1
 
-    row = {"id": img_id}
-    row.update({CLASS_NAMES[i]: class_counts[i] for i in range(len(CLASS_NAMES))})
-    results.append(row)
+            cls_id = class_ids[idx].item()
+            conf = scores[idx].item()
+            counts[cls_id] += 1
 
-# === Save predictions to CSV ===
-df = pd.DataFrame(results)
-df = df[["id"] + CLASS_NAMES]  # enforce column order
-df.to_csv(OUTPUT_CSV_PATH, index=False)
+            draw.rectangle([xmin, ymin, xmax, ymax], outline="blue", width=2)
+            draw.text((xmin, ymin), f"{CLASS_NAMES[cls_id]}:{conf:.2f}", fill="white", font=font)
 
-print(f"✅ Predictions saved to {OUTPUT_CSV_PATH}")
+    else:
+        counts = np.zeros(C, dtype=int)
+
+    draw_img.save(os.path.join(OUTPUT_IMG_DIR, filename))
+    return counts
+
+# === MAIN SCRIPT ===
+def main():
+    model, device = load_model(MODEL_PATH)
+
+    rows = []
+    image_files = [f for f in os.listdir(IMAGE_DIR) if f.lower().endswith(('.jpg', '.png', '.jpeg'))]
+
+    for filename in tqdm(image_files, desc="Predicting"):
+        img_path = os.path.join(IMAGE_DIR, filename)
+        image = Image.open(img_path).convert("RGB")
+
+        instance_counts = predict_and_draw(model, device, image, filename)
+        img_id = int(os.path.splitext(filename)[0].lstrip("L"))
+
+        row = [img_id] + instance_counts.tolist()
+        rows.append(row)
+
+    df = pd.DataFrame(rows, columns=["id"] + CLASS_NAMES)
+    df.sort_values("id", inplace=True)
+    df.to_csv(OUTPUT_CSV_PATH, index=False)
+    print(f"Saved predictions to {OUTPUT_CSV_PATH}")
+    print(f"Saved inference images to {OUTPUT_IMG_DIR}")
+
+if __name__ == "__main__":
+    main()

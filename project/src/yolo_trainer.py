@@ -384,8 +384,8 @@ def main():
         print("val_loss " + str(val_loss))
         train_losses.append(train_loss)
         val_losses.append(val_loss)
-        save_model(model, f"model_epoch_{epoch}.pth")
-        visualize_predictions(f"model_epoch_{epoch}.pth", val_loader, output_dir, epoch, build_model_fn=lambda: YOLOv1TinyCNN(S=S, B=B, C=C), S=S, B=B, C=C)
+        save_model(model, f"checkpoint/model_epoch_{epoch}.pth")
+        visualize_predictions(f"checkpoint/model_epoch_{epoch}.pth", val_loader, output_dir, epoch, build_model_fn=lambda: YOLOv1TinyCNN(S=S, B=B, C=C), S=S, B=B, C=C)
     plot_loss(train_losses, val_losses)
 
 if __name__ == "__main__":
