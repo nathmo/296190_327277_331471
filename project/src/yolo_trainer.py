@@ -458,6 +458,7 @@ def visualize_predictions(model_path, dataloader, output_dir, epoch, build_model
 # -------------------------------
 
 def save_model(model, path):
+    os.makedirs(f"checkpoint", exist_ok=True)
     torch.save(model.state_dict(), path)
 
 # -------------------------------
@@ -495,7 +496,7 @@ def main():
 
     train_dataset = YOLODataset(image_train, label_train, S=S, B=B, C=C)
     val_dataset = YOLODataset(image_val, label_val, S=S, B=B, C=C)
-    train_loader = DataLoader(train_dataset, batch_size=6, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=6, shuffle=True, num_workers=6, pin_memory=True)
     val_loader = DataLoader(val_dataset, batch_size=1)
 
     print(torch.cuda.memory_allocated() / 1024 ** 2, "MB allocated")
