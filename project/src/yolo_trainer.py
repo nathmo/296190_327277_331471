@@ -57,6 +57,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import confusion_matrix, precision_score, recall_score, average_precision_score
 from tqdm import tqdm
+from collections import defaultdict
 
 # -------------------------------
 # 1. YOLODataset Class
@@ -73,6 +74,9 @@ class YOLODataset(Dataset):
         self.C = C
         self.transform = transforms.Compose([
             transforms.Resize((448, 448)),
+            transforms.RandomHorizontalFlip(),
+            transforms.ColorJitter(),
+            transforms.RandomAffine(degrees=10, translate=(0.1, 0.1), scale=(0.9, 1.1)),
             transforms.ToTensor()
         ])
 
@@ -197,7 +201,7 @@ class YOLOv1TinyCNN(nn.Module):
         # Detection head (Conv instead of FC)
         self.head = nn.Sequential(
             nn.Conv2d(256, 128, 3, 1, 1),     # → 7x7x128
-            nn.LeakyReLU(0.1),
+            nn.LeakyReLU(0.3),
             nn.Conv2d(128, out_channels, 1),  # → 7x7x(5*B + C)
         )
 
@@ -247,7 +251,138 @@ def evaluate(model, dataloader, loss_fn, device):
             preds = model(imgs)
             loss = loss_fn(preds, targets)
             total_loss += loss.item()
-    return total_loss / len(dataloader)
+    #val_map, class_aps = compute_map(model, dataloader, device, S=7, B=2, C=13)
+    val_map = 0
+    return total_loss / len(dataloader), val_map
+
+def compute_map(model, dataloader, device, iou_threshold=0.5, conf_threshold=0.4, S=7, B=2, C=13):
+    model.eval()
+    pred_boxes = []
+    true_boxes = []
+    image_idx = 0
+
+    with torch.no_grad():
+        for imgs, targets in tqdm(dataloader, desc="Computing mAP"):
+            imgs, targets = imgs.to(device), targets.to(device)
+            preds = model(imgs)
+
+            for b in range(imgs.shape[0]):
+                pred = preds[b].cpu()
+                target = targets[b].cpu()
+
+                # Gather predictions
+                for row in range(S):
+                    for col in range(S):
+                        for box_idx in range(B):
+                            conf = pred[row, col, box_idx * 5 + 4]
+                            if conf < conf_threshold:
+                                continue
+                            x, y, w, h = pred[row, col, box_idx * 5: box_idx * 5 + 4]
+                            class_pred = pred[row, col, B * 5:].argmax().item()
+
+                            cx = (col + x.item()) / S
+                            cy = (row + y.item()) / S
+                            bw = w.item()
+                            bh = h.item()
+
+                            xmin = cx - bw / 2
+                            ymin = cy - bh / 2
+                            xmax = cx + bw / 2
+                            ymax = cy + bh / 2
+                            pred_boxes.append([image_idx, class_pred, conf.item(), xmin, ymin, xmax, ymax])
+
+                # Gather ground-truth
+                for row in range(S):
+                    for col in range(S):
+                        for box_idx in range(B):
+                            if target[row, col, box_idx * 5 + 4] == 1:
+                                x, y, w, h = target[row, col, box_idx * 5: box_idx * 5 + 4]
+                                class_target = target[row, col, B * 5:].argmax().item()
+
+                                cx = (col + x.item()) / S
+                                cy = (row + y.item()) / S
+                                bw = w.item()
+                                bh = h.item()
+
+                                xmin = cx - bw / 2
+                                ymin = cy - bh / 2
+                                xmax = cx + bw / 2
+                                ymax = cy + bh / 2
+                                true_boxes.append([image_idx, class_target, xmin, ymin, xmax, ymax])
+                image_idx += 1
+
+    # Format into numpy arrays
+    pred_boxes = np.array(pred_boxes)
+    true_boxes = np.array(true_boxes)
+
+    # Compute AP for each class
+    average_precisions = []
+    for c in range(C):
+        detections = pred_boxes[pred_boxes[:, 1] == c]
+        ground_truths = [gt for gt in true_boxes if int(gt[1]) == c]
+
+
+        img_gt_count = defaultdict(int)
+        for gt in ground_truths:
+            if int(gt[1]) == c:
+                img_gt_count[int(gt[0])] += 1
+
+        img_detections_used = {k: np.zeros(v) for k, v in img_gt_count.items()}
+        detections = sorted(detections, key=lambda x: -x[2])
+
+        TP = np.zeros(len(detections))
+        FP = np.zeros(len(detections))
+        for i, det in enumerate(detections):
+            image, _, _, x1, y1, x2, y2 = det
+            image = int(image)
+            ious = []
+
+            for j, gt in enumerate(ground_truths):
+                if int(gt[0]) != image:
+                    continue
+                iou = intersection_over_union([x1, y1, x2, y2], gt[2:])
+                ious.append((iou, j))
+
+            if len(ious) > 0:
+                iou, best_idx = max(ious, key=lambda x: x[0])
+                if iou > iou_threshold and img_detections_used[image][best_idx] == 0:
+                    TP[i] = 1
+                    if best_idx < len(img_detections_used[image]):
+                        img_detections_used[image][best_idx] = 1
+                else:
+                    FP[i] = 1
+            else:
+                FP[i] = 1
+
+        acc_TP = np.cumsum(TP)
+        acc_FP = np.cumsum(FP)
+        recalls = acc_TP / (len(ground_truths) + 1e-6)
+        precisions = acc_TP / (acc_TP + acc_FP + 1e-6)
+        ap = compute_ap(recalls, precisions)
+        average_precisions.append(ap)
+
+    return np.mean(average_precisions), average_precisions
+
+def intersection_over_union(box1, box2):
+    x1 = max(box1[0], box2[0])
+    y1 = max(box1[1], box2[1])
+    x2 = min(box1[2], box2[2])
+    y2 = min(box1[3], box2[3])
+
+    inter = max(0, x2 - x1) * max(0, y2 - y1)
+    area1 = max(0, box1[2] - box1[0]) * max(0, box1[3] - box1[1])
+    area2 = max(0, box2[2] - box2[0]) * max(0, box2[3] - box2[1])
+    union = area1 + area2 - inter
+    return inter / (union + 1e-6)
+
+def compute_ap(recalls, precisions):
+    recalls = np.concatenate([[0.0], recalls, [1.0]])
+    precisions = np.concatenate([[0.0], precisions, [0.0]])
+    for i in range(len(precisions) - 1, 0, -1):
+        precisions[i - 1] = max(precisions[i - 1], precisions[i])
+    indices = np.where(recalls[1:] != recalls[:-1])[0]
+    ap = sum((recalls[i + 1] - recalls[i]) * precisions[i + 1] for i in indices)
+    return ap
 
 # -------------------------------
 # 7. Visualize Predictions
@@ -374,17 +509,14 @@ def main():
     print("----------------------------------------------------")
 
     train_losses, val_losses = [], []
-    for epoch in range(100):
-        print(torch.cuda.memory_allocated() / 1024 ** 2, "MB allocated")
-        print(torch.cuda.memory_reserved() / 1024 ** 2, "MB reserved")
-        print("Model running on:", next(model.parameters()).device)
+    for epoch in range(50):
         train_loss = train_one_epoch(model, train_loader, optimizer, loss_fn, device)
-        val_loss = evaluate(model, val_loader, loss_fn, device)
-        print("train_loss " + str(train_loss))
-        print("val_loss " + str(val_loss))
+        val_loss, val_map = evaluate(model, val_loader, loss_fn, device)
+        print(f"Epoch {epoch + 1} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | mAP: {val_map:.4f}")
         train_losses.append(train_loss)
         val_losses.append(val_loss)
         save_model(model, f"checkpoint/model_epoch_{epoch}.pth")
+        print("model checkpoint saved to : "+f"checkpoint/model_epoch_{epoch}.pth")
         visualize_predictions(f"checkpoint/model_epoch_{epoch}.pth", val_loader, output_dir, epoch, build_model_fn=lambda: YOLOv1TinyCNN(S=S, B=B, C=C), S=S, B=B, C=C)
     plot_loss(train_losses, val_losses)
 
