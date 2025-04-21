@@ -14,8 +14,9 @@ from yolo_trainer import YOLOv1TinyCNN
 """
 this script compute the F1 score like kaggle and print other useful stat about network performance.
 """
+
 # === CONFIGURATION ===
-MODEL_PATH = "checkpoint/model_epoch_25.pth"
+MODEL_PATH = "checkpoint/model_epoch_48.pth"
 IMAGE_DIR = "../chocolate_data/dataset_project_iapr2025/train"
 CSV_GT_PATH = "../chocolate_data/dataset_project_iapr2025/train.csv"
 OUTPUT_CSV_PATH = "inference_train/submission_train.csv"

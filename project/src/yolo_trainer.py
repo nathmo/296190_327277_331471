@@ -491,7 +491,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu") #
     model = YOLOv1TinyCNN(S=S, B=B, C=C).to(device)
     loss_fn = YOLOLoss(S=S, B=B, C=C)
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-5)
     print("")
 
     train_dataset = YOLODataset(image_train, label_train, S=S, B=B, C=C)
@@ -510,7 +510,7 @@ def main():
     print("----------------------------------------------------")
 
     train_losses, val_losses = [], []
-    for epoch in range(50):
+    for epoch in range(200):
         train_loss = train_one_epoch(model, train_loader, optimizer, loss_fn, device)
         val_loss, val_map = evaluate(model, val_loader, loss_fn, device)
         print(f"Epoch {epoch + 1} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | mAP: {val_map:.4f}")
