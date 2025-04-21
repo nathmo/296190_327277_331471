@@ -197,6 +197,9 @@ val_loader = DataLoader(val_set, batch_size=BATCH_SIZE, shuffle=False, num_worke
 
 # === MODEL, LOSS, OPTIMIZER ===
 model = YOCO().to(DEVICE)
+# Count trainable parameters
+num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+print(f"Number of trainable parameters: {num_params:,}")
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
