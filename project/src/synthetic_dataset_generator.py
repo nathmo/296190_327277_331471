@@ -251,7 +251,7 @@ for idx in tqdm(range(NUM_IMAGES)):
         obj = random_transform(obj, "Misc", {"Misc": (1.0, 1.0)})
         bbox = paste_object(background, obj, obj.split()[-1], objects, max_attempts=20, iou_threshold=0.0)
     # Paste Chocolates
-    choc_to_place = random.randint(0, 8)
+    choc_to_place = random.randint(0, 20)
     chocolates_used = []
     for _ in range(choc_to_place):
         class_name = random.choice(list(CHOCOLATE_CLASSES))

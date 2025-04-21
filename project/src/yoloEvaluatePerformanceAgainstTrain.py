@@ -124,9 +124,11 @@ def draw_predicted_boxes(img_name, image, boxes, labels, scores):
         label = f"{CLASS_NAMES[cls_id]}: {score:.2f}"
 
         draw.rectangle([xmin, ymin, xmax, ymax], outline="blue", width=2)
-        text_size = font.getsize(label)
-        draw.rectangle([xmin, ymin - text_size[1], xmin + text_size[0], ymin], fill="blue")
-        draw.text((xmin, ymin - text_size[1]), label, fill="white", font=font)
+        text_bbox = font.getbbox(label)
+        text_width = text_bbox[2] - text_bbox[0]
+        text_height = text_bbox[3] - text_bbox[1]
+        draw.rectangle([xmin, ymin - text_height, xmin + text_width, ymin], fill="blue")
+        draw.text((xmin, ymin - text_height), label, fill="white", font=font)
 
     output_path = os.path.join(OUTPUT_IMG_DIR, f"{img_name}_pred.png")
     image.save(output_path)
