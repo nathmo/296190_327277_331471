@@ -93,6 +93,7 @@ class YOCO(nn.Module):
 5. Output:
    - compute the F1 global and class wise using the ../chocolate_data/dataset_project_iapr2025/train/*.JPG
    - output a .csv called submission.csv by running inference on ../chocolate_data/dataset_project_iapr2025/test/*.JPG
+   (follow the same format shown before)
 Dependencies:
 -------------
 - Python stdlib: os, glob, random, pathlib, time
@@ -111,7 +112,6 @@ torchvision == 0.21.*
 tqdm == 4.67.*
 
 """
-
 import torch
 import torch.nn.functional as F
 from torchvision import transforms
@@ -122,16 +122,24 @@ import os
 from yoco import YOCO
 from glob import glob
 from tqdm import tqdm
-import re
 
 # === CONFIG ===
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-MODEL_PATH = "last_model_epoch1.pt"
-IMAGE_DIR = "../chocolate_data/dataset_project_iapr2025/train/"
+MODEL_PATH = "model_94F1.pt"
+TRAIN_IMAGE_DIR = "../chocolate_data/dataset_project_iapr2025/train/"
+TEST_IMAGE_DIR = "../chocolate_data/dataset_project_iapr2025/test/"
 CSV_GT_PATH = "../chocolate_data/dataset_project_iapr2025/train.csv"
+SUBMISSION_PATH = "submission.csv"
 NUM_CLASSES = 13
 MAX_COUNT = 6
-IMAGE_SIZE = (800, 1200)  # same as during training
+IMAGE_SIZE = (800, 1200)
+
+# === CLASS NAMES ===
+CLASS_NAMES = [
+    "Jelly_White", "Jelly_Milk", "Jelly_Black", "Amandina", "Crème_brulée",
+    "Triangolo", "Tentation_noir", "Comtesse", "Noblesse", "Noir_authentique",
+    "Passion_au_lait", "Arabia", "Stracciatella"
+]
 
 # === TRANSFORMS ===
 transform = transforms.Compose([
@@ -144,74 +152,79 @@ model = YOCO(num_classes=NUM_CLASSES, count_range=MAX_COUNT).to(DEVICE)
 model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
 model.eval()
 
-# === LOAD CSV GROUND TRUTH ===
+# === LOAD GROUND TRUTH CSV ===
 df = pd.read_csv(CSV_GT_PATH)
 df["id"] = df["id"].astype(str)
-class_names = df.columns[1:].tolist()
 gt_map = df.set_index("id").to_dict(orient="index")
 
-# === MATCH IMAGES TO GROUND TRUTH ===
-image_files = glob(os.path.join(IMAGE_DIR, "*.JPG"))
-id_to_path = {}
+# === VALIDATE ON TRAIN SET ===
+print("\nVALIDATION (TRAIN SET)")
+train_files = glob(os.path.join(TRAIN_IMAGE_DIR, "*.JPG"))
+y_true, y_pred = [], []
 
-for path in image_files:
+for path in tqdm(train_files, desc="Evaluating"):
     filename = os.path.basename(path)
-    match = re.search(r"(\d{7})", filename)
-    if match:
-        img_id = match.group(1)
-        if img_id in gt_map:
-            id_to_path[img_id] = path
+    img_id = filename.replace("L", "").replace(".JPG", "")
+    if img_id not in gt_map:
+        continue
 
-y_true = []
-y_pred = []
-
-print("Computing predictions...")
-for img_id, path in tqdm(id_to_path.items(), desc="Evaluating"):
     image = Image.open(path).convert("RGB")
     image = transform(image).unsqueeze(0).to(DEVICE)
 
     with torch.no_grad():
-        output = model(image)  # [1, 13, 6]
+        output = model(image)
         predicted_counts = torch.argmax(output, dim=2).squeeze().cpu().numpy()
 
     gt_counts = np.array(list(gt_map[img_id].values()))
     gt_counts = np.clip(gt_counts, 0, MAX_COUNT - 1)
 
-    print(f"\nImage ID: {img_id}")
-    for i, class_name in enumerate(class_names):
-        print(f"  {class_name:<20} GT: {gt_counts[i]} | Pred: {predicted_counts[i]}")
-
     y_pred.append(predicted_counts)
     y_true.append(gt_counts)
+
+    print(f"\nImage ID: {img_id}")
+    for i in range(NUM_CLASSES):
+        print(f"  {CLASS_NAMES[i]:<18} - Pred: {predicted_counts[i]}, GT: {gt_counts[i]}")
 
 y_pred = np.array(y_pred)
 y_true = np.array(y_true)
 
-# === F1 SCORE FUNCTIONS ===
-def compute_f1(y_pred, y_true):
+def compute_f1_per_class(y_pred, y_true):
     f1_scores = []
-    for i in range(len(y_true)):
-        tpi = np.minimum(y_true[i], y_pred[i]).sum()
-        fpni = np.abs(y_true[i] - y_pred[i]).sum()
-        f1 = (2 * tpi) / (2 * tpi + fpni) if (2 * tpi + fpni) > 0 else 0.0
+    for c in range(NUM_CLASSES):
+        tp = np.minimum(y_pred[:, c], y_true[:, c]).sum()
+        fn_fp = np.abs(y_pred[:, c] - y_true[:, c]).sum()
+        f1 = (2 * tp) / (2 * tp + fn_fp) if (2 * tp + fn_fp) > 0 else 0.0
         f1_scores.append(f1)
-    return np.mean(f1_scores)
+    return f1_scores
 
-def compute_classwise_f1(y_pred, y_true):
-    classwise_f1 = []
-    for i in range(y_true.shape[1]):
-        tpi = np.minimum(y_true[:, i], y_pred[:, i]).sum()
-        fpni = np.abs(y_true[:, i] - y_pred[:, i]).sum()
-        f1 = (2 * tpi) / (2 * tpi + fpni) if (2 * tpi + fpni) > 0 else 0.0
-        classwise_f1.append(f1)
-    return classwise_f1
+f1_scores = compute_f1_per_class(y_pred, y_true)
 
-# === EVALUATE ===
-print("\n==== SUMMARY ====")
-f1_score = compute_f1(y_pred, y_true)
-print(f"Overall F1 Score: {f1_score:.4f}")
+print("\nF1 Scores per Class:")
+for name, score in zip(CLASS_NAMES, f1_scores):
+    print(f"{name:<18}: {score:.4f}")
 
-class_f1s = compute_classwise_f1(y_pred, y_true)
-print("\nPer-class F1 Scores:")
-for name, f1 in zip(class_names, class_f1s):
-    print(f"  {name:<20}: {f1:.4f}")
+print(f"\nGlobal F1 Score: {np.mean(f1_scores):.4f}")
+
+# === INFERENCE ON TEST SET ===
+print("\nRUNNING INFERENCE (TEST SET)")
+test_files = sorted(glob(os.path.join(TEST_IMAGE_DIR, "*.JPG")))
+results = []
+
+for path in tqdm(test_files, desc="Inferencing"):
+    filename = os.path.basename(path)
+    img_id = filename.replace("L", "").replace(".JPG", "")
+
+    image = Image.open(path).convert("RGB")
+    image = transform(image).unsqueeze(0).to(DEVICE)
+
+    with torch.no_grad():
+        output = model(image)
+        predicted_counts = torch.argmax(output, dim=2).squeeze().cpu().numpy()
+
+    results.append([img_id] + predicted_counts.tolist())
+
+# === WRITE SUBMISSION CSV ===
+submission_df = pd.DataFrame(results, columns=["id","Jelly White","Jelly Milk","Jelly Black","Amandina","Crème brulée","Triangolo","Tentation noir","Comtesse","Noblesse","Noir authentique","Passion au lait","Arabia","Stracciatella"])
+submission_df.to_csv(SUBMISSION_PATH, index=False)
+print(f"\nSubmission saved to {SUBMISSION_PATH}")
+
