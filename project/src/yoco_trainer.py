@@ -145,8 +145,8 @@ IMAGE_SIZE = (800, 1200)  # H, W
 BATCH_SIZE = 16
 EPOCHS = 30
 LEARNING_RATE = 1e-4
-#DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-DEVICE = torch.device("cpu")
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#DEVICE = torch.device("cpu")
 
 data_dir = Path("../chocolate_data/syntheticDataset")
 train_img_dir = data_dir / "images/train"
