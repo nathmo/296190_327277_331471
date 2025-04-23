@@ -16,9 +16,8 @@ This script will use the cropped picture to generate new synthetic scene to trai
     ├── images/
     │   ├── train/
     │   └── val/
-    └── labels/
-        ├── train/
-        └── val/
+    ├── train.csv
+    └── val.csv
 prompt : 
 
 now lets write a synthetic dataset generatorto handle the 13 classes :
@@ -40,55 +39,8 @@ BACKGROUND_DIR = Path("../chocolate_data/praline_clean/Background")
 
 
 the background are 6000x4000 px image. the others are 1000px by 1000 px image (with transparent background)
-The generator will distribut 0 to 8 chocolate per image (the class and the ammount are chosen at random)
-the generator will distribute 2 to 6 MiscObjects.
-for each MiscObjects and Chocolate, add a random rotation between 0 and 360 degree
-and a random scaling between 0.5 and 2.
-Select one of the background at random and paste the MiscObject on top (ensure the MiscObject are not on top of each other/dont collide
-but they can touch. (if there is a collision, redraw at random a new position, scaling, rotation up to 20 time)
-then Paste the chocolate. (ensure the chocolate are not on top of each other of more than 20% of their total surface)
-but they can touch. (if there is a collision, redraw at random a new position, scaling, rotation up to 20 time)
-(but they can be on top of misc item)
-ensure that least one pair of chocolate (if more than two are present) will touch each other.
-Save the generated scene in "../chocolate_data/syntheticDataset"
-and follow the subfolder layout that yolov8 will expect.
-keep 20% of image for training. dont forget to make the .txt in the correct format
-with the position and everyhting for the chocolate. The script should generate 1000 synthetic
-scene but I should be able to change that quickly) also allow me to resize the scene
-at the end by a given scaling factor if needed.
-I want to set the class index for the chocolate like this : 
-0 = Jelly White
-1= Jelly Milk
-2= Jelly Black
-3= Amandina
-4=Crème brulée
-5=Triangolo
-6=Tentation noir
-7=Comtesse
-8=Noblesse
-9=Noir authentique
-10=Passion au lait
-11=Arabia
-12=Stracciatella
-"""
-import os
-import random
-from pathlib import Path
-from PIL import Image, ImageDraw
-import numpy as np
-from tqdm import tqdm
-
-# Configurations
-NUM_IMAGES = 20000
-SCALING_FACTOR = 1.0  # Set to <1.0 to downscale final output
-SAVE_DIR = Path("../chocolate_data/syntheticDataset")
-IMAGE_DIR = SAVE_DIR / "images"
-LABEL_DIR = SAVE_DIR / "labels"
-
-BACKGROUND_DIR = Path("../chocolate_data/praline_clean/Background")
-MISC_DIR = Path("../chocolate_data/praline_clean/MiscObjects")
-# Directory where YOLO label .txt files are stored (both train and val)
-label_dirs = [Path("../chocolate_data/syntheticDataset/labels/train"), Path("../chocolate_data/syntheticDataset/labels/val")]
+The generator will distribut 0 to 5 chocolate per image class. (choose at random)
+here are the chocolate class with id :
 
 CHOCOLATE_CLASSES = {
     "Jelly_White": 0,
@@ -106,6 +58,15 @@ CHOCOLATE_CLASSES = {
     "Stracciatella": 12
 }
 
+the generator will distribute 0 to 6 MiscObjects. (equal probabilites
+for each MiscObjects and Chocolate, add a random rotation between 0 and 360 degree
+for the random scaling, follow this : (x and y rescalling factor). add +-20% jitter on top
+
+for the chocolate I want to define custom probabilities for the number of instance :
+for name in choco_names:
+    num_instances = random.choices([0, 1, 2, 3, 4, 5], weights=[0.45, 0.30, 0.15, 0.06, 0.03, 0.01])[0]
+    for _ in range(num_instances):
+
 rescale_factors = {
     "Amandina": (1, 1),
     "Arabia": (0.7, 0.7),
@@ -122,187 +83,206 @@ rescale_factors = {
     "Triangolo": (0.7, 0.7)
 }
 
+Select one of the background at random and paste the MiscObject on top (ensure the MiscObject are not on top of each other/dont collide
+but they can touch. (if there is a collision, redraw at random a new position, scaling, rotation up to 20 time)
 
-CHOCOLATE_DIRS = {name: Path(f"../chocolate_data/praline_clean/{name}") for name in CHOCOLATE_CLASSES}
+then Paste the chocolate. (ensure the chocolate are not on top of each other of more than 20% of their total surface)
+but they can touch. (if there is a collision of more than 20%, redraw at random a new position, scaling, rotation up to 20 time)
+(but they can be on top of misc item)
+ensure that least one pair of chocolate (if more than two are present) will touch each other.
 
-def load_images_from_dir(directory):
-    return [Image.open(p).convert("RGBA") for p in directory.glob("*.png")]
+Save the generated scene in "../chocolate_data/syntheticDataset"
+train_img_dir = data_dir / "images/train"
+val_img_dir = data_dir / "images/val"
+for the label create two csv
+val_lbl = data_dir / "val.csv"
+train_lbl = data_dir / "train.csv"
+and formatted like this :
+id,Jelly White,Jelly Milk,Jelly Black,Amandina,Crème brulée,Triangolo,Tentation noir,Comtesse,Noblesse,Noir authentique,Passion au lait,Arabia,Stracciatella
+1000756,2,0,0,0,0,1,0,0,1,0,0,0,2
+1000763,2,3,3,0,0,0,0,0,0,0,0,0,0
+the ID match the picture file (just add a .JPG)  (start at 1000000 and increment from there)
 
-def random_transform(image, class_name, base_rescale_factors, variation=0.2):
-    angle = random.uniform(0, 360)
+and follow the following pattern :
+keep 20% (set a constant for me to change) of image for training.
+The script should generate 10000 synthetic scene but I should be able to change that quickly) also allow me to resize the scene
+at the end by a given scaling factor if needed. (the final image to make them smaller)
+I want to set the class index for the chocolate like this : 
 
-    base_w_factor, base_h_factor = base_rescale_factors[class_name]
-    scale_variation_w = random.uniform(1 - variation, 1 + variation)
-    scale_variation_h = random.uniform(1 - variation, 1 + variation)
+the script is threaded and use N-2 core available for image generation. use TQDM to show progress.
+"""
 
-    target_w = int(1000 * base_w_factor * scale_variation_w)
-    target_h = int(1000 * base_h_factor * scale_variation_h)
+import os
+import random
+import csv
+from pathlib import Path
+from PIL import Image
+import numpy as np
+from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    image = image.resize((target_w, target_h), resample=Image.Resampling.LANCZOS)
-    image = image.rotate(angle, expand=True)
-    return image
+# Configurable constants
+NUM_IMAGES = 200
+TRAIN_RATIO = 0.8
+OUTPUT_RESCALE_FACTOR = 1.0
+START_ID = 1000000
 
+N_WORKERS = max(1, os.cpu_count() - 2)
 
-def remove_partially(image, max_remove_ratio=0.4):
-    if random.random() > 0.2:
-        return image
+data_dir = Path("../chocolate_data/syntheticDataset")
+train_img_dir = data_dir / "images/train"
+val_img_dir = data_dir / "images/val"
+train_lbl = data_dir / "train.csv"
+val_lbl = data_dir / "val.csv"
 
-    mask = image.split()[-1]
-    non_transparent = np.array(mask) > 0
-    total_pixels = np.sum(non_transparent)
+BACKGROUND_DIR = Path("../chocolate_data/praline_clean/Background")
+MISC_DIR = Path("../chocolate_data/praline_clean/MiscObjects")
+PRALINE_DIRS = {
+    "Jelly_White": Path("../chocolate_data/praline_clean/Jelly_White"),
+    "Jelly_Milk": Path("../chocolate_data/praline_clean/Jelly_Milk"),
+    "Jelly_Black": Path("../chocolate_data/praline_clean/Jelly_Black"),
+    "Amandina": Path("../chocolate_data/praline_clean/Amandina"),
+    "Crème_brulée": Path("../chocolate_data/praline_clean/Crème_brulée"),
+    "Triangolo": Path("../chocolate_data/praline_clean/Triangolo"),
+    "Tentation_noir": Path("../chocolate_data/praline_clean/Tentation_noir"),
+    "Comtesse": Path("../chocolate_data/praline_clean/Comtesse"),
+    "Noblesse": Path("../chocolate_data/praline_clean/Noblesse"),
+    "Noir_authentique": Path("../chocolate_data/praline_clean/Noir_authentique"),
+    "Passion_au_lait": Path("../chocolate_data/praline_clean/Passion_au_lait"),
+    "Arabia": Path("../chocolate_data/praline_clean/Arabia"),
+    "Stracciatella": Path("../chocolate_data/praline_clean/Stracciatella"),
+}
 
-    if total_pixels == 0:
-        return image
+CHOCOLATE_CLASSES = {
+    "Jelly_White": 0,
+    "Jelly_Milk": 1,
+    "Jelly_Black": 2,
+    "Amandina": 3,
+    "Crème_brulée": 4,
+    "Triangolo": 5,
+    "Tentation_noir": 6,
+    "Comtesse": 7,
+    "Noblesse": 8,
+    "Noir_authentique": 9,
+    "Passion_au_lait": 10,
+    "Arabia": 11,
+    "Stracciatella": 12,
+}
 
-    attempts = 20
+RESCALE_FACTORS = {
+    "Amandina": (1, 1),
+    "Arabia": (0.7, 0.7),
+    "Comtesse": (0.7, 0.7),
+    "Crème_brulée": (0.5, 0.5),
+    "Jelly_White": (0.5, 0.5),
+    "Jelly_Milk": (0.5, 0.5),
+    "Jelly_Black": (0.5, 0.5),
+    "Noblesse": (0.7, 0.7),
+    "Noir_authentique": (0.7, 0.7),
+    "Passion_au_lait": (0.7, 0.7),
+    "Stracciatella": (0.7, 0.7),
+    "Tentation_noir": (0.7, 0.7),
+    "Triangolo": (0.7, 0.7),
+}
+
+def apply_transform(img, scale, rotation):
+    w, h = img.size
+    jitter = random.uniform(0.8, 1.2)
+    new_size = (int(scale[0] * w * jitter), int(scale[1] * h * jitter))
+    img = img.resize(new_size, resample=Image.BICUBIC)
+    return img.rotate(rotation, expand=True)
+
+def get_non_colliding_position(existing_boxes, new_size, canvas_size, max_overlap_ratio=0.2, attempts=20):
     for _ in range(attempts):
-        w, h = image.size
-        crop_w = random.randint(int(0.1*w), int(0.25*w))
-        crop_h = random.randint(int(0.1*h), int(0.25*h))
-        x = random.randint(0, w - crop_w)
-        y = random.randint(0, h - crop_h)
-
-        crop_mask = Image.new("L", (w, h), 0)
-        temp_draw = ImageDraw.Draw(crop_mask)
-        angle = random.uniform(0, 360)
-
-        rect = [(x, y), (x + crop_w, y), (x + crop_w, y + crop_h), (x, y + crop_h)]
-        cx, cy = x + crop_w / 2, y + crop_h / 2
-        rotated_rect = [
-            (
-                cx + (px - cx) * np.cos(np.radians(angle)) - (py - cy) * np.sin(np.radians(angle)),
-                cy + (px - cx) * np.sin(np.radians(angle)) + (py - cy) * np.cos(np.radians(angle))
-            )
-            for px, py in rect
-        ]
-
-        temp_draw.polygon(rotated_rect, fill=255)
-        crop_mask_np = np.array(crop_mask)
-
-        intersect = np.logical_and(crop_mask_np > 0, non_transparent)
-        affected_pixels = np.sum(intersect)
-
-        if affected_pixels / total_pixels <= max_remove_ratio:
-            np_img = np.array(image)
-            np_img[crop_mask_np > 0, 3] = 0  # Set alpha to 0
-            return Image.fromarray(np_img)
-
-    return image
-
-def paste_object(bg, obj, mask, occupied, max_attempts=20, iou_threshold=0.1):
-    bg_w, bg_h = bg.size
-    obj_w, obj_h = obj.size
-
-    for _ in range(max_attempts):
-        x = random.randint(0, bg_w - obj_w)
-        y = random.randint(0, bg_h - obj_h)
-        bbox = (x, y, x + obj_w, y + obj_h)
-
-        if not collides(bbox, occupied, iou_threshold):
-            bg.paste(obj, (x, y), mask)
-            occupied.append(bbox)
-            return bbox
+        x = random.randint(0, canvas_size[0] - new_size[0])
+        y = random.randint(0, canvas_size[1] - new_size[1])
+        new_box = (x, y, x + new_size[0], y + new_size[1])
+        overlaps = [get_iou(new_box, box) > max_overlap_ratio for box in existing_boxes]
+        if not any(overlaps):
+            return (x, y)
     return None
 
-def collides(bbox, others, iou_threshold):
-    x1, y1, x2, y2 = bbox
-    area1 = (x2 - x1) * (y2 - y1)
-    for ox1, oy1, ox2, oy2 in others:
-        xi1, yi1 = max(x1, ox1), max(y1, oy1)
-        xi2, yi2 = min(x2, ox2), min(y2, oy2)
-        if xi1 >= xi2 or yi1 >= yi2:
-            continue
-        inter_area = (xi2 - xi1) * (yi2 - yi1)
-        union_area = area1 + (ox2 - ox1) * (oy2 - oy1) - inter_area
-        if inter_area / union_area > iou_threshold:
-            return True
-    return False
+def get_iou(boxA, boxB):
+    xA = max(boxA[0], boxB[0])
+    yA = max(boxA[1], boxB[1])
+    xB = min(boxA[2], boxB[2])
+    yB = min(boxA[3], boxB[3])
+    inter_area = max(0, xB - xA) * max(0, yB - yA)
+    if inter_area == 0:
+        return 0
+    boxA_area = (boxA[2] - boxA[0]) * (boxA[3] - boxA[1])
+    boxB_area = (boxB[2] - boxB[0]) * (boxB[3] - boxB[1])
+    return inter_area / float(boxA_area + boxB_area - inter_area)
 
-def bbox_to_yolo(bbox, img_size):
-    img_w, img_h = img_size
-    x1, y1, x2, y2 = bbox
-    x_center = (x1 + x2) / 2 / img_w
-    y_center = (y1 + y2) / 2 / img_h
-    width = (x2 - x1) / img_w
-    height = (y2 - y1) / img_h
-    return x_center, y_center, width, height
+def generate_image_task(i):
+    img_id = START_ID + i
+    is_train = i < int(TRAIN_RATIO * NUM_IMAGES)
+    folder = train_img_dir if is_train else val_img_dir
 
-# Prepare directories
-for split in ['train', 'val']:
-    (SAVE_DIR / 'images' / split).mkdir(parents=True, exist_ok=True)
-    (SAVE_DIR / 'labels' / split).mkdir(parents=True, exist_ok=True)
+    bg_path = random.choice(list(BACKGROUND_DIR.glob("*")))
+    bg = Image.open(bg_path).convert("RGB")
 
-# Load backgrounds and misc items
-backgrounds = load_images_from_dir(BACKGROUND_DIR)
-misc_items = load_images_from_dir(MISC_DIR)
-chocolates = {name: load_images_from_dir(path) for name, path in CHOCOLATE_DIRS.items()}
+    placed_boxes = []
+    labels_count = {name: 0 for name in CHOCOLATE_CLASSES}
 
-# Generate synthetic scenes
-for idx in tqdm(range(NUM_IMAGES)):
-    background = random.choice(backgrounds).copy().convert("RGBA")
-    W, H = background.size
-    objects = []
-    labels = []
+    misc_paths = list(MISC_DIR.glob("*.png"))
+    for _ in range(random.randint(0, 6)):
+        obj_path = random.choice(misc_paths)
+        obj = Image.open(obj_path).convert("RGBA")
+        obj = apply_transform(obj, (1, 1), random.uniform(0, 360))
+        pos = get_non_colliding_position(placed_boxes, obj.size, bg.size, 0.0)
+        if pos:
+            bg.paste(obj, pos, obj)
+            placed_boxes.append((pos[0], pos[1], pos[0]+obj.width, pos[1]+obj.height))
 
-    # Paste Misc Items
-    misc_to_place = random.randint(2, 6)
-    for _ in range(misc_to_place):
-        obj = random.choice(misc_items).copy()
-        obj = random_transform(obj, "Misc", {"Misc": (1.0, 1.0)})
-        bbox = paste_object(background, obj, obj.split()[-1], objects, max_attempts=20, iou_threshold=0.0)
-    # Paste Chocolates
-    choc_to_place = random.randint(0, 20)
-    chocolates_used = []
-    for _ in range(choc_to_place):
-        class_name = random.choice(list(CHOCOLATE_CLASSES))
-        class_idx = CHOCOLATE_CLASSES[class_name]
-        imgs = chocolates[class_name]
-        if not imgs:
-            print(f"Warning: No images found for class {class_name}")
-            continue
-        img = random.choice(imgs).copy()
-        img = random_transform(img, class_name, rescale_factors)  # updated call
-        mask = img.split()[-1]
-        bbox = paste_object(background, img, mask, objects, max_attempts=20, iou_threshold=0.2)
-        if bbox:
-            labels.append((class_idx, bbox_to_yolo(bbox, background.size)))
-            chocolates_used.append(bbox)
+    choco_names = list(CHOCOLATE_CLASSES.keys())
+    for name in choco_names:
+        num_instances = random.choices([0, 1, 2, 3, 4, 5], weights=[0.45, 0.30, 0.15, 0.06, 0.03, 0.01])[0]
+        for _ in range(num_instances):
+            choco_files = list(PRALINE_DIRS[name].glob("*.png"))
+            if not choco_files:
+                continue
+            choco = Image.open(random.choice(choco_files)).convert("RGBA")
+            choco = apply_transform(choco, RESCALE_FACTORS[name], random.uniform(0, 360))
+            pos = get_non_colliding_position(placed_boxes, choco.size, bg.size, 0.2)
+            if pos:
+                bg.paste(choco, pos, choco)
+                labels_count[name] += 1
+                placed_boxes.append((pos[0], pos[1], pos[0]+choco.width, pos[1]+choco.height))
 
-    if len(chocolates_used) > 1:
-        box1 = chocolates_used[-1]
-        box2 = chocolates_used[-2]
-        x1 = min(box1[0], box2[0])
-        y1 = min(box1[1], box2[1])
-        x2 = max(box1[2], box2[2])
-        y2 = max(box1[3], box2[3])
-        labels[-1] = (labels[-1][0], bbox_to_yolo((x1, y1, x2, y2), background.size))
+    if OUTPUT_RESCALE_FACTOR != 1.0:
+        new_size = (
+            int(bg.size[0] * OUTPUT_RESCALE_FACTOR),
+            int(bg.size[1] * OUTPUT_RESCALE_FACTOR)
+        )
+        bg = bg.resize(new_size)
 
-    if SCALING_FACTOR != 1.0:
-        new_size = (int(W * SCALING_FACTOR), int(H * SCALING_FACTOR))
-        background = background.resize(new_size, Image.ANTIALIAS)
-        W, H = new_size
-        labels = [(cls, bbox_to_yolo((int(b[0]*SCALING_FACTOR), int(b[1]*SCALING_FACTOR), int(b[2]*SCALING_FACTOR), int(b[3]*SCALING_FACTOR)), (W, H))) for cls, b in labels]
+    img_path = folder / f"{img_id}.JPG"
+    bg.save(img_path)
 
-    split = 'val' if random.random() < 0.2 else 'train'
-    img_name = f"scene_{idx:04d}.jpg"
-    label_name = f"scene_{idx:04d}.txt"
+    return (img_id, [labels_count[k] for k in CHOCOLATE_CLASSES], is_train)
 
-    background.convert("RGB").save(SAVE_DIR / 'images' / split / img_name)
-    with open(SAVE_DIR / 'labels' / split / label_name, 'w') as f:
-        for cls, (xc, yc, w, h) in labels:
-            f.write(f"{cls} {xc:.6f} {yc:.6f} {w:.6f} {h:.6f}\n")
+def main():
+    train_img_dir.mkdir(parents=True, exist_ok=True)
+    val_img_dir.mkdir(parents=True, exist_ok=True)
 
-# Ensure each label file has exactly 25 lines by padding with dummy bbox if necessary
-TARGET_BOX_COUNT = 25
-dummy_bbox = (0.0, 0.0, 0.0, 0.0)  # Format: xc, yc, w, h
+    header = ["id"] + list(CHOCOLATE_CLASSES.keys())
+    train_rows, val_rows = [], []
 
-for label_dir in label_dirs:
-    for label_file in label_dir.glob("*.txt"):
-        with open(label_file, "r") as f:
-            lines = f.readlines()
+    with ThreadPoolExecutor(max_workers=N_WORKERS) as executor:
+        futures = [executor.submit(generate_image_task, i) for i in range(NUM_IMAGES)]
+        for future in tqdm(as_completed(futures), total=NUM_IMAGES, desc="Generating images"):
+            img_id, counts, is_train = future.result()
+            row = [img_id] + counts
+            (train_rows if is_train else val_rows).append(row)
 
-        n = len(lines)
-        if n < TARGET_BOX_COUNT:
-            with open(label_file, "a") as f:
-                for _ in range(TARGET_BOX_COUNT - n):
-                    f.write(f"0 {dummy_bbox[0]:.6f} {dummy_bbox[1]:.6f} {dummy_bbox[2]:.6f} {dummy_bbox[3]:.6f}\n")
+    with open(train_lbl, "w", newline='') as f_train, open(val_lbl, "w", newline='') as f_val:
+        writer_train = csv.writer(f_train)
+        writer_val = csv.writer(f_val)
+        writer_train.writerow(header)
+        writer_val.writerow(header)
+        writer_train.writerows(train_rows)
+        writer_val.writerows(val_rows)
+
+if __name__ == "__main__":
+    main()
