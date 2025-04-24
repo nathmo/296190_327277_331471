@@ -214,7 +214,6 @@ class ChocolateDataset(Dataset):
 
         return image, label
 
-
 def get_dataloaders():
     train_ds = ChocolateDataset(TRAIN_CSV, TRAIN_IMG_DIR, train=True)
     val_ds = ChocolateDataset(VAL_CSV, VAL_IMG_DIR)
