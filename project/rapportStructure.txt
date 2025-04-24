@@ -1,0 +1,77 @@
+
+#### 1. Introduction
+- Problem overview: praline counting in cluttered scenes.
+- Motivation & constraints (e.g., no pretraining, not enough original images).
+- Our approach in a nutshell (dataset synthesis + YOLO-style counting model).
+
+#### 2. Dataset & Preprocessing
+- Description of original dataset:
+  - Number of images, resolution, conditions, objects per image.
+- EDA on original dataset:
+  - Image examples.
+  - Histogram of praline count per image.
+  - Class imbalance (bar plot per class).
+- Instance extraction:
+  - Show a few cropped pralines.
+  - Mention 583 cropped pralines across 13 classes.
+  - visualize size distribution of pralines or object positioning per class? Could help model design choices. (praline size dont vary much dont single head is good enough)
+- Synthetic dataset generation:
+  - Explain how background and objects were combined.
+  - Explain how you ensured class balance.
+  - Show sample generated images.
+  - Final dataset stats (images, label balance, resolution).
+
+
+#### 3. Model Architecture
+- Motivation for direct counting (not object detection).
+- Description of YOLO-style architecture:
+  - Include diagram or schematic of model.
+- Explanation of output layer: `13 classes × 6 neurons`
+- Input size, normalization, padding strategy if relevant. (a precésier plus tard)
+
+#### 4. Training
+- Data split (train/val). (80/20, ballec on as tellement de donné)
+- Hyperparameters (batch size, epochs, learning rate, etc.)
+- Loss function & why softmax per class is used.
+- Optimizer & scheduler if used.
+- Include training loss plot.
+
+
+#### 5. Evaluation
+- Description of F1-score metric.
+- Evaluation process (on synthetic validation or original images?)
+- Show:
+  - F1 score per image and average.
+  - Class-wise accuracy/confusion matrix.
+  - Visual comparison of ground truth vs prediction on sample images.
+
+#### 6. Inference on Original Images
+- Description of final inference setup.
+- Load final model.
+- Parse original images & corresponding CSV ground truth.
+- Predict and compare with real counts.
+- Show per-image table: `image ID | GT counts | Predicted counts | F1`
+
+#### 7. Results Summary
+- Final F1 score on original dataset.
+- Example success cases (model does great).
+- Example failure cases (too cluttered, occlusions, etc.)
+- Insights about how well model generalizes to real scenes.
+
+#### 8. Discussion & Limitations
+- What worked well (e.g., synthetic scene generation).
+- What didn’t (e.g., failure on specific chocolate classes?).
+- Limitations of training from scratch.
+- Ideas for future work (e.g., more complex scene synthesis, weak supervision, semi-supervised learning).
+
+#### 9. Appendix
+- Model architecture code.
+- Full training logs.
+- List of dependencies.
+- Any helper scripts or utilities.
+- Journal de bord (dire ce quon as essayé et dans quelle ordre :
+	- autoencoder (sans comprendre comment sa marche)
+	- ultralytics yolo
+	- classical ML
+	- yolo v1 torch
+	- yoco (custom head)

@@ -122,13 +122,15 @@ import os
 from yoco import YOCO
 from glob import glob
 from tqdm import tqdm
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 # === CONFIG ===
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-MODEL_PATH = "model_94F1.pt"
-TRAIN_IMAGE_DIR = "../chocolate_data/dataset_project_iapr2025/train/"
+MODEL_PATH = "model_96F1.pt"
+TRAIN_IMAGE_DIR = "../chocolate_data/dataset_project_iapr2025/test/"
 TEST_IMAGE_DIR = "../chocolate_data/dataset_project_iapr2025/test/"
-CSV_GT_PATH = "../chocolate_data/dataset_project_iapr2025/train.csv"
+CSV_GT_PATH = "../chocolate_data/dataset_project_iapr2025/test.csv"
 SUBMISSION_PATH = "submission.csv"
 NUM_CLASSES = 13
 MAX_COUNT = 6
@@ -157,6 +159,14 @@ df = pd.read_csv(CSV_GT_PATH)
 df["id"] = df["id"].astype(str)
 gt_map = df.set_index("id").to_dict(orient="index")
 
+# === CONFUSION MATRIX SETUP ===
+conf_matrix = np.zeros((NUM_CLASSES * MAX_COUNT, NUM_CLASSES * MAX_COUNT), dtype=np.float64)
+# One 6x6 matrix per class (predicted count vs ground truth count)
+per_class_conf_matrices = np.zeros((NUM_CLASSES, MAX_COUNT, MAX_COUNT), dtype=np.int32)
+
+def count_label(class_idx, count):
+    return class_idx * MAX_COUNT + count
+
 # === VALIDATE ON TRAIN SET ===
 print("\nVALIDATION (TRAIN SET)")
 train_files = glob(os.path.join(TRAIN_IMAGE_DIR, "*.JPG"))
@@ -180,6 +190,23 @@ for path in tqdm(train_files, desc="Evaluating"):
 
     y_pred.append(predicted_counts)
     y_true.append(gt_counts)
+
+    # Update confusion matrix
+    for cls in range(NUM_CLASSES):
+        pred_count = predicted_counts[cls]
+        true_count = gt_counts[cls]
+
+        # Clamp in case values go outside [0, MAX_COUNT-1]
+        pred_count = min(MAX_COUNT - 1, max(0, pred_count))
+        true_count = min(MAX_COUNT - 1, max(0, true_count))
+
+        # Update big global matrix
+        pred_label = count_label(cls, pred_count)
+        true_label = count_label(cls, true_count)
+        conf_matrix[true_label, pred_label] += 1
+
+        # Update class-specific 6x6 matrix
+        per_class_conf_matrices[cls, true_count, pred_count] += 1
 
     print(f"\nImage ID: {img_id}")
     for i in range(NUM_CLASSES):
@@ -227,4 +254,35 @@ for path in tqdm(test_files, desc="Inferencing"):
 submission_df = pd.DataFrame(results, columns=["id","Jelly White","Jelly Milk","Jelly Black","Amandina","Crème brulée","Triangolo","Tentation noir","Comtesse","Noblesse","Noir authentique","Passion au lait","Arabia","Stracciatella"])
 submission_df.to_csv(SUBMISSION_PATH, index=False)
 print(f"\nSubmission saved to {SUBMISSION_PATH}")
+
+
+# Normalize confusion matrix
+conf_matrix_normalized = conf_matrix / conf_matrix.sum()
+
+# Plot confusion matrix
+plt.figure(figsize=(20, 18))
+ax = sns.heatmap(conf_matrix_normalized, cmap="Blues", square=True, cbar=True)
+ax.set_title("Normalized Confusion Matrix (13 classes x 6 counts)")
+ax.set_xlabel("Predicted")
+ax.set_ylabel("Ground Truth")
+plt.tight_layout()
+plt.savefig("confusion_matrix.png")
+plt.close()
+print("saved "+"confusion_matrix.png")
+
+# === PLOT PER-CLASS CONFUSION MATRICES ===
+for cls in range(NUM_CLASSES):
+    plt.figure(figsize=(6, 5))
+    ax = sns.heatmap(
+        per_class_conf_matrices[cls] / per_class_conf_matrices[cls].sum(),
+        annot=True, fmt=".2f", cmap="Oranges", cbar=True,
+        xticklabels=[f"{i}" for i in range(MAX_COUNT)],
+        yticklabels=[f"{i}" for i in range(MAX_COUNT)]
+    )
+    ax.set_title(f"Confusion Matrix for {CLASS_NAMES[cls]}")
+    ax.set_xlabel("Predicted Count")
+    ax.set_ylabel("Ground Truth Count")
+    plt.tight_layout()
+    plt.savefig(f"conf_matrix_{CLASS_NAMES[cls].replace(' ', '_')}.png")
+    plt.close()
 
