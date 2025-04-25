@@ -1,144 +1,289 @@
-import os
+"""
+You Only Count Once Model Validator and Inference
+======================================
+
+1. Objective: Count instances of 13 chocolate classes in cluttered 6000x4000 JPEG images.
+More than 10 instance per class is higly unlikely. The highest number of instance of a chocolate on a signle image is 5
+thus we will train the network over the 13 class with 6 neuron for each class (one hot encoding of the ammount :0-1-2-3-4-5 and more)
+this should make the network smaller, more robust and faster to train than yolo while directly predicting what we need.
+
+2. Dataset:
+
+IMAGE_SCORE_DIR = "../chocolate_data/dataset_project_iapr2025/train/*.JPG"
+IMAGE_INFERENCE_DIR = "../chocolate_data/dataset_project_iapr2025/test/*.JPG"
+CSV_GT_PATH = "../chocolate_data/dataset_project_iapr2025/train.csv" formatted like this :
+id,Jelly White,Jelly Milk,Jelly Black,Amandina,Crème brulée,Triangolo,Tentation noir,Comtesse,Noblesse,Noir authentique,Passion au lait,Arabia,Stracciatella
+1000756,2,0,0,0,0,1,0,0,1,0,0,0,2
+1000763,2,3,3,0,0,0,0,0,0,0,0,0,0
+the ID match the picture file (just add a .JPG at the end and a L at the beginning)
+
+CHOCOLATE_CLASSES = {
+    "Jelly_White": 0,
+    "Jelly_Milk": 1,
+    "Jelly_Black": 2,
+    "Amandina": 3,
+    "Crème_brulée": 4,
+    "Triangolo": 5,
+    "Tentation_noir": 6,
+    "Comtesse": 7,
+    "Noblesse": 8,
+    "Noir_authentique": 9,
+    "Passion_au_lait": 10,
+    "Arabia": 11,
+    "Stracciatella": 12
+}
+   - Image are 6000x4000 pixel (.JPG)
+   - Max 5 chocolates per class; sizes 200-1000 px wide in original images.
+...
+3. Model Input:
+   - All images resized to 1200x800. (quarter resolution)
+   - Single detection head (not multi-scale), since object sizes are consistent.
+4. Architecture:
+    - yolo style convolution stage (adapt for non square image)
+    - custom counting head (13 class * 6 neurons)
+the class is defined in yoco.py and should be imported
+class YOCO(nn.Module):
+    def __init__(self, num_classes=13, count_range=6):
+        super(YOCO, self).__init__()
+        self.num_classes = num_classes
+        self.count_range = count_range
+        self.output_dim = num_classes * count_range
+
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(0.1),
+            nn.MaxPool2d(2),
+
+            nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(0.1),
+            nn.MaxPool2d(2),
+
+            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(0.1),
+            nn.MaxPool2d(2),
+
+            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(0.1),
+            nn.MaxPool2d(2),
+
+            nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(0.1),
+            nn.MaxPool2d(2),
+
+            nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(0.1),
+            nn.MaxPool2d(2),
+        )
+
+        self.head = nn.Sequential(
+            nn.Conv2d(256, 128, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(0.3),
+            nn.Conv2d(128, self.output_dim, kernel_size=1),
+        )
+
+    def forward(self, x):
+        x = self.features(x)  # Shape: [B, 256, 7, 7] for 1200x800 input
+        x = self.head(x)      # Shape: [B, 13*6, 7, 7]
+        x = F.adaptive_avg_pool2d(x, (1, 1))  # [B, 13*6, 1, 1]
+        x = x.view(x.size(0), self.num_classes, self.count_range)  # [B, 13, 6]
+        return x
+(Import the model weight. should be called "best.pth"
+
+
+5. Output:
+   - compute the F1 global and class wise using the ../chocolate_data/dataset_project_iapr2025/train/*.JPG
+   - output a .csv called submission.csv by running inference on ../chocolate_data/dataset_project_iapr2025/test/*.JPG
+   (follow the same format shown before)
+Dependencies:
+-------------
+- Python stdlib: os, glob, random, pathlib, time
+ipykernel == 6.29.*
+matplotlib == 3.9.*
+numpy == 2.0.*
+opencv-contrib-python == 4.11.*
+pandas == 2.2.*
+pillow == 11.1.*
+scikit-image == 0.24.*
+scikit-learn == 1.6.*
+scipy == 1.13.*
+seaborn == 0.13.*
+torch == 2.6.*
+torchvision == 0.21.*
+tqdm == 4.67.*
+
+"""
 import torch
+import torch.nn.functional as F
+from torchvision import transforms
+from PIL import Image
 import pandas as pd
-from tqdm import tqdm
-from PIL import Image, ImageDraw, ImageFont
-import torchvision.transforms as T
-from torchvision.ops import nms
 import numpy as np
-from src.yolo_trainer import YOLOv1TinyCNN  # adjust if needed
+import os
+from yoco import YOCO
+from glob import glob
+from tqdm import tqdm
+import seaborn as sns
+import matplotlib.pyplot as plt
 
-# === CONFIGURATION ===
-MODEL_PATH = "src/checkpoint/model_epoch_25.pth"
-IMAGE_DIR = "chocolate_data/dataset_project_iapr2025/test"
-OUTPUT_CSV_PATH = "submission.csv"
-OUTPUT_IMG_DIR = "inference"
+# === CONFIG ===
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+MODEL_PATH = "model_94F1.pt"
+TRAIN_IMAGE_DIR = "../chocolate_data/dataset_project_iapr2025/test/"
+TEST_IMAGE_DIR = "../chocolate_data/dataset_project_iapr2025/test/"
+CSV_GT_PATH = "../chocolate_data/dataset_project_iapr2025/test.csv"
+SUBMISSION_PATH = "submission.csv"
 
-CLASS_NAMES = ['Jelly White', 'Jelly Milk', 'Jelly Black', 'Amandina', 'Crème brulée', 'Triangolo',
-               'Tentation noir', 'Comtesse', 'Noblesse', 'Noir authentique', 'Passion au lait',
-               'Arabia', 'Stracciatella']
+NUM_CLASSES = 13
+MAX_COUNT = 6
+IMAGE_SIZE = (800, 1200)
 
-S = 7  # grid size
-B = 2  # number of boxes
-C = 13  # number of classes
-CONF_THRESH = 0.6
-INPUT_SIZE = 448
+# === CLASS NAMES ===
+CLASS_NAMES = [
+    "Jelly_White", "Jelly_Milk", "Jelly_Black", "Amandina", "Crème_brulée",
+    "Triangolo", "Tentation_noir", "Comtesse", "Noblesse", "Noir_authentique",
+    "Passion_au_lait", "Arabia", "Stracciatella"
+]
 
-# === SETUP ===
-os.makedirs(OUTPUT_IMG_DIR, exist_ok=True)
-font = ImageFont.load_default()
-
-# === MODEL LOADER ===
-def load_model(model_path):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = YOLOv1TinyCNN(S=S, B=B, C=C).to(device)
-    state_dict = torch.load(model_path, map_location=device)
-    model.load_state_dict(state_dict)
-    model.eval()
-    return model, device
-
-# === TRANSFORM ===
-transform = T.Compose([
-    T.Resize((INPUT_SIZE, INPUT_SIZE)),
-    T.ToTensor(),
+# === TRANSFORMS ===
+transform = transforms.Compose([
+    transforms.Resize(IMAGE_SIZE),
+    transforms.ToTensor(),
 ])
 
-# === INFERENCE WITH DRAWING ===
-def predict_and_draw(model, device, image, filename):
-    image_tensor = transform(image).unsqueeze(0).to(device)
+# === LOAD MODEL ===
+model = YOCO(num_classes=NUM_CLASSES, count_range=MAX_COUNT).to(DEVICE)
+model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
+model.eval()
+
+# === LOAD GROUND TRUTH CSV ===
+df = pd.read_csv(CSV_GT_PATH)
+df["id"] = df["id"].astype(str)
+gt_map = df.set_index("id").to_dict(orient="index")
+
+# === CONFUSION MATRIX SETUP ===
+conf_matrix = np.zeros((NUM_CLASSES * MAX_COUNT, NUM_CLASSES * MAX_COUNT), dtype=np.float64)
+# One 6x6 matrix per class (predicted count vs ground truth count)
+per_class_conf_matrices = np.zeros((NUM_CLASSES, MAX_COUNT, MAX_COUNT), dtype=np.int32)
+
+def count_label(class_idx, count):
+    return class_idx * MAX_COUNT + count
+
+# === VALIDATE ON TRAIN SET ===
+print("\nVALIDATION (TRAIN SET)")
+train_files = glob(os.path.join(TRAIN_IMAGE_DIR, "*.JPG"))
+y_true, y_pred = [], []
+
+for path in tqdm(train_files, desc="Evaluating"):
+    filename = os.path.basename(path)
+    img_id = filename.replace("L", "").replace(".JPG", "")
+    if img_id not in gt_map:
+        continue
+
+    image = Image.open(path).convert("RGB")
+    image = transform(image).unsqueeze(0).to(DEVICE)
+
     with torch.no_grad():
-        output = model(image_tensor)[0].cpu()
+        output = model(image)
+        predicted_counts = torch.argmax(output, dim=2).squeeze().cpu().numpy()
 
-    draw_img = image.resize((INPUT_SIZE, INPUT_SIZE)).copy()
-    draw = ImageDraw.Draw(draw_img)
-    cell_size = 1 / S
+    gt_counts = np.array(list(gt_map[img_id].values()))
+    gt_counts = np.clip(gt_counts, 0, MAX_COUNT - 1)
 
-    boxes = []
-    scores = []
-    class_ids = []
+    y_pred.append(predicted_counts)
+    y_true.append(gt_counts)
 
-    # === Collect all boxes first ===
-    for row in range(S):
-        for col in range(S):
-            for b in range(B):
-                conf = output[row, col, b * 5 + 4]
-                if conf > CONF_THRESH:
-                    x, y, w, h = output[row, col, b * 5: b * 5 + 4]
-                    if any(torch.isnan(torch.tensor([x, y, w, h]))):
-                        continue
-                    cls_id = output[row, col, B * 5:].argmax().item()
+    # Update confusion matrix
+    for cls in range(NUM_CLASSES):
+        pred_count = predicted_counts[cls]
+        true_count = gt_counts[cls]
 
-                    cx = (col + x.item()) * cell_size
-                    cy = (row + y.item()) * cell_size
-                    box_w = w.item()
-                    box_h = h.item()
+        # Clamp in case values go outside [0, MAX_COUNT-1]
+        pred_count = min(MAX_COUNT - 1, max(0, pred_count))
+        true_count = min(MAX_COUNT - 1, max(0, true_count))
 
-                    xmin = (cx - box_w / 2) * INPUT_SIZE
-                    ymin = (cy - box_h / 2) * INPUT_SIZE
-                    xmax = (cx + box_w / 2) * INPUT_SIZE
-                    ymax = (cy + box_h / 2) * INPUT_SIZE
+        # Update big global matrix
+        pred_label = count_label(cls, pred_count)
+        true_label = count_label(cls, true_count)
+        conf_matrix[true_label, pred_label] += 1
 
-                    if xmax <= xmin or ymax <= ymin:
-                        continue
+        # Update class-specific 6x6 matrix
+        per_class_conf_matrices[cls, true_count, pred_count] += 1
 
-                    boxes.append([xmin, ymin, xmax, ymax])
-                    scores.append(conf.item())
-                    class_ids.append(cls_id)
+    print(f"\nImage ID: {img_id}")
+    for i in range(NUM_CLASSES):
+        print(f"  {CLASS_NAMES[i]:<18} - Pred: {predicted_counts[i]}, GT: {gt_counts[i]}")
 
-    # === Apply NMS ===
-    if boxes:
-        boxes = torch.tensor(boxes)
-        scores = torch.tensor(scores)
-        class_ids = torch.tensor(class_ids)
+y_pred = np.array(y_pred)
+y_true = np.array(y_true)
 
-        keep = nms(boxes, scores, iou_threshold=0.4)
+def compute_f1_per_class(y_pred, y_true):
+    f1_scores = []
+    for c in range(NUM_CLASSES):
+        tp = np.minimum(y_pred[:, c], y_true[:, c]).sum()
+        fn_fp = np.abs(y_pred[:, c] - y_true[:, c]).sum()
+        f1 = (2 * tp) / (2 * tp + fn_fp) if (2 * tp + fn_fp) > 0 else 0.0
+        f1_scores.append(f1)
+    return f1_scores
 
-        counts = np.zeros(C, dtype=int)
-        for idx in keep:
-            xmin, ymin, xmax, ymax = boxes[idx].tolist()
-            xmin = max(0, min(INPUT_SIZE, int(xmin)))
-            ymin = max(0, min(INPUT_SIZE, int(ymin)))
-            xmax = max(0, min(INPUT_SIZE, int(xmax)))
-            ymax = max(0, min(INPUT_SIZE, int(ymax)))
+f1_scores = compute_f1_per_class(y_pred, y_true)
 
-            if (xmax - xmin) < 2 or (ymax - ymin) < 2:
-                continue
+print("\nF1 Scores per Class:")
+for name, score in zip(CLASS_NAMES, f1_scores):
+    print(f"{name:<18}: {score:.4f}")
 
-            cls_id = class_ids[idx].item()
-            conf = scores[idx].item()
-            counts[cls_id] += 1
+print(f"\nGlobal F1 Score: {np.mean(f1_scores):.4f}")
 
-            draw.rectangle([xmin, ymin, xmax, ymax], outline="blue", width=2)
-            draw.text((xmin, ymin), f"{CLASS_NAMES[cls_id]}:{conf:.2f}", fill="white", font=font)
+# === INFERENCE ON TEST SET ===
+print("\nRUNNING INFERENCE (TEST SET)")
+test_files = sorted(glob(os.path.join(TEST_IMAGE_DIR, "*.JPG")))
+results = []
 
-    else:
-        counts = np.zeros(C, dtype=int)
+for path in tqdm(test_files, desc="Inferencing"):
+    filename = os.path.basename(path)
+    img_id = filename.replace("L", "").replace(".JPG", "")
 
-    draw_img.save(os.path.join(OUTPUT_IMG_DIR, filename))
-    return counts
+    image = Image.open(path).convert("RGB")
+    image = transform(image).unsqueeze(0).to(DEVICE)
 
-# === MAIN SCRIPT ===
-def main():
-    model, device = load_model(MODEL_PATH)
+    with torch.no_grad():
+        output = model(image)
+        predicted_counts = torch.argmax(output, dim=2).squeeze().cpu().numpy()
 
-    rows = []
-    image_files = [f for f in os.listdir(IMAGE_DIR) if f.lower().endswith(('.jpg', '.png', '.jpeg'))]
+    results.append([img_id] + predicted_counts.tolist())
 
-    for filename in tqdm(image_files, desc="Predicting"):
-        img_path = os.path.join(IMAGE_DIR, filename)
-        image = Image.open(img_path).convert("RGB")
+# === WRITE SUBMISSION CSV ===
+submission_df = pd.DataFrame(results, columns=["id","Jelly White","Jelly Milk","Jelly Black","Amandina","Crème brulée","Triangolo","Tentation noir","Comtesse","Noblesse","Noir authentique","Passion au lait","Arabia","Stracciatella"])
+submission_df.to_csv(SUBMISSION_PATH, index=False)
+print(f"\nSubmission saved to {SUBMISSION_PATH}")
 
-        instance_counts = predict_and_draw(model, device, image, filename)
-        img_id = int(os.path.splitext(filename)[0].lstrip("L"))
 
-        row = [img_id] + instance_counts.tolist()
-        rows.append(row)
+# Normalize confusion matrix
+conf_matrix_normalized = conf_matrix / conf_matrix.sum()
 
-    df = pd.DataFrame(rows, columns=["id"] + CLASS_NAMES)
-    df.sort_values("id", inplace=True)
-    df.to_csv(OUTPUT_CSV_PATH, index=False)
-    print(f"Saved predictions to {OUTPUT_CSV_PATH}")
-    print(f"Saved inference images to {OUTPUT_IMG_DIR}")
+# Plot confusion matrix
+plt.figure(figsize=(20, 18))
+ax = sns.heatmap(conf_matrix_normalized, cmap="Blues", square=True, cbar=True)
+ax.set_title("Normalized Confusion Matrix (13 classes x 6 counts)")
+ax.set_xlabel("Predicted")
+ax.set_ylabel("Ground Truth")
+plt.tight_layout()
+plt.savefig("confusion_matrix.png")
+plt.close()
+print("saved "+"confusion_matrix.png")
 
-if __name__ == "__main__":
-    main()
+# === PLOT PER-CLASS CONFUSION MATRICES ===
+for cls in range(NUM_CLASSES):
+    plt.figure(figsize=(6, 5))
+    ax = sns.heatmap(
+        per_class_conf_matrices[cls] / per_class_conf_matrices[cls].sum(),
+        annot=True, fmt=".2f", cmap="Oranges", cbar=True,
+        xticklabels=[f"{i}" for i in range(MAX_COUNT)],
+        yticklabels=[f"{i}" for i in range(MAX_COUNT)]
+    )
+    ax.set_title(f"Confusion Matrix for {CLASS_NAMES[cls]}")
+    ax.set_xlabel("Predicted Count")
+    ax.set_ylabel("Ground Truth Count")
+    plt.tight_layout()
+    plt.savefig(f"conf_matrix_{CLASS_NAMES[cls].replace(' ', '_')}.png")
+    plt.close()
+

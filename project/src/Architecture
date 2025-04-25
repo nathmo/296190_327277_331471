@@ -69,10 +69,10 @@ look for epoch that have the best F1 score on testing dataset.
 
 # yoco_trainer.py
 
-TRAIN_IMG_DIR = Path("../chocolate_data/syntheticDataset") -> what to train on (synthetic)
-TEST_IMG_DIR = Path("../chocolate_data/syntheticDataset") -> what to test on (synthetic)
-TEST_TRAIN_IMG_DIR = Path("../chocolate_data/") -> what to VALIDATE on (original traning set)
-TEST_VAL_IMG_DIR = Path("../chocolate_data/") -> what to VALIDATE on (original testing set)
+TRAIN_IMG_DIR = Path("../chocolate_data/syntheticDataset") -> what to train on (synthetic)    (Loss)
+TEST_IMG_DIR = Path("../chocolate_data/syntheticDataset") -> what to test on (synthetic)      (Loss)
+TEST_TRAIN_IMG_DIR = Path("../chocolate_data/") -> what to VALIDATE on (original traning set) (F1)
+TEST_VAL_IMG_DIR = Path("../chocolate_data/") -> what to VALIDATE on (original testing set)   (F1)
 
 TRAIN_CSV = DATA_DIR / "train.csv" -> ground truth training synthetic
 TEST_CSV = DATA_DIR / "val.csv" -> ground truth testing synthetic
