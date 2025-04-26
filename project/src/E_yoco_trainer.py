@@ -383,16 +383,16 @@ def main():
     train_dataset = ChocolateDataset(DATA_DIR / "train.csv", DATA_DIR / "images/train", train=True)
     val_dataset = ChocolateDataset(DATA_DIR / "val.csv", DATA_DIR / "images/val")
 
-    train_loader = DataLoader(train_dataset, batch_size=args.BATCH_SIZE, shuffle=True, num_workers=args.NUM_WORKER)
-    val_loader = DataLoader(val_dataset, batch_size=args.BATCH_SIZE, shuffle=False, num_workers=args.NUM_WORKER)
+    train_loader = DataLoader(train_dataset, batch_size=args.BATCH_SIZE, shuffle=True, num_workers=args.NUM_WORKER, pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_size=args.BATCH_SIZE, shuffle=False, num_workers=args.NUM_WORKER, pin_memory=True)
 
-    real_train_dataset = ChocolateDataset("dataset/dataset_project_iapr2025/train.csv",
-                                         "dataset/dataset_project_iapr2025/train/", L=True)
-    real_train_loader = DataLoader(real_train_dataset, batch_size=args.BATCH_SIZE, shuffle=False, num_workers=args.NUM_WORKER)
+    real_train_dataset = ChocolateDataset(Path("dataset/dataset_project_iapr2025/train.csv"),
+                                         Path("dataset/dataset_project_iapr2025/train/"), L=True)
+    real_train_loader = DataLoader(real_train_dataset, batch_size=args.BATCH_SIZE, shuffle=False, num_workers=args.NUM_WORKER, pin_memory=True)
 
-    real_val_dataset = ChocolateDataset("dataset/dataset_project_iapr2025/test.csv",
-                                         "dataset/dataset_project_iapr2025/test/", L=True)
-    real_val_loader = DataLoader(real_val_dataset, batch_size=args.BATCH_SIZE, shuffle=False, num_workers=args.NUM_WORKER)
+    real_val_dataset = ChocolateDataset(Path("dataset/dataset_project_iapr2025/test.csv"),
+                                         Path("dataset/dataset_project_iapr2025/test/"), L=True)
+    real_val_loader = DataLoader(real_val_dataset, batch_size=args.BATCH_SIZE, shuffle=False, num_workers=args.NUM_WORKER, pin_memory=True)
 
     # Model
     model_class = {"YOCO": YOCO, "YOCOSMALL": YOCOSMALL, "YOCOTINY": YOCOTINY, "YOCOLARGE": YOCOLARGE}[args.YOCO_ARCH]
@@ -461,7 +461,7 @@ def main():
         y_pred_list = []
 
         with torch.no_grad():
-            for images, labels in tqdm(real_train_loader, desc=f"Epoch {epoch+1}/{args.EPOCHS} [Validation Train]"):
+            for images, labels in tqdm(real_train_loader, desc=f"Epoch {epoch+1}/{args.EPOCHS} [F1 Train]"):
                 images, labels = images.to(device), labels.to(device)
 
                 outputs = model(images)  # [B, 13, 6]
@@ -480,7 +480,7 @@ def main():
         y_pred_list = []
 
         with torch.no_grad():
-            for images, labels in tqdm(real_train_loader, desc=f"Epoch {epoch+1}/{args.EPOCHS} [Validation Test]"):
+            for images, labels in tqdm(real_train_loader, desc=f"Epoch {epoch+1}/{args.EPOCHS} [F1 Test]"):
                 images, labels = images.to(device), labels.to(device)
 
                 outputs = model(images)  # [B, 13, 6]
