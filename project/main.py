@@ -9,9 +9,9 @@ this should make the network smaller, more robust and faster to train than yolo 
 
 2. Dataset:
 
-IMAGE_SCORE_DIR = "../chocolate_data/dataset_project_iapr2025/train/*.JPG"
-IMAGE_INFERENCE_DIR = "../chocolate_data/dataset_project_iapr2025/test/*.JPG"
-CSV_GT_PATH = "../chocolate_data/dataset_project_iapr2025/train.csv" formatted like this :
+IMAGE_SCORE_DIR = "../dataset/dataset_project_iapr2025/train/*.JPG"
+IMAGE_INFERENCE_DIR = "../dataset/dataset_project_iapr2025/test/*.JPG"
+CSV_GT_PATH = "../dataset/dataset_project_iapr2025/train.csv" formatted like this :
 id,Jelly White,Jelly Milk,Jelly Black,Amandina,Crème brulée,Triangolo,Tentation noir,Comtesse,Noblesse,Noir authentique,Passion au lait,Arabia,Stracciatella
 1000756,2,0,0,0,0,1,0,0,1,0,0,0,2
 1000763,2,3,3,0,0,0,0,0,0,0,0,0,0
@@ -91,8 +91,8 @@ class YOCO(nn.Module):
 
 
 5. Output:
-   - compute the F1 global and class wise using the ../chocolate_data/dataset_project_iapr2025/train/*.JPG
-   - output a .csv called submission.csv by running inference on ../chocolate_data/dataset_project_iapr2025/test/*.JPG
+   - compute the F1 global and class wise using the ../dataset/dataset_project_iapr2025/train/*.JPG
+   - output a .csv called submission.csv by running inference on ../dataset/dataset_project_iapr2025/test/*.JPG
    (follow the same format shown before)
 Dependencies:
 -------------
