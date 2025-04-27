@@ -83,15 +83,23 @@ class YOCOLARGE(nn.Module):
             nn.MaxPool2d(2),  # [B, 1024, 18, 12]
         )
 
+        # Reduce the head's complexity to cut down parameters
         self.head = nn.Sequential(
             nn.Conv2d(1024, 512, kernel_size=3, stride=1, padding=1),  # [B, 512, 18, 12]
             nn.LeakyReLU(0.3),
 
-            nn.Conv2d(512, 256, kernel_size=3, stride=1, padding=1),  # [B, 256, 18, 12]
+            nn.Conv2d(512, 128, kernel_size=3, stride=1, padding=1),  # [B, 128, 18, 12]
             nn.LeakyReLU(0.3),
 
-            nn.Conv2d(256, self.output_dim, kernel_size=1),  # [B, 78, 18, 12]
+            nn.Conv2d(128, self.output_dim, kernel_size=1),  # [B, 78, 18, 12]
         )
+
+    def forward(self, x):
+        x = self.features(x)  # [B, 1024, 18, 12]
+        x = self.head(x)  # [B, 78, 18, 12]
+        x = F.adaptive_avg_pool2d(x, (1, 1))  # [B, 78, 1, 1]
+        x = x.view(x.size(0), self.num_classes, self.count_range)  # [B, 13, 6]
+        return x
 
     def forward(self, x):
         x = self.features(x)  # [B, 1024, 18, 12]
