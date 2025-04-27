@@ -51,6 +51,7 @@ class YOCO(nn.Module):
 
 class YOCOLARGE(nn.Module):
     def __init__(self, num_classes=13, count_range=6):
+        super(YOCOLARGE, self).__init__()
         self.num_classes = num_classes
         self.count_range = count_range
         self.output_dim = num_classes * count_range
@@ -101,6 +102,7 @@ class YOCOLARGE(nn.Module):
 
 class YOCOSMALL(nn.Module):
     def __init__(self, num_classes=13, count_range=6):
+        super(YOCOSMALL, self).__init__()
         self.num_classes = num_classes
         self.count_range = count_range
         self.output_dim = num_classes * count_range
@@ -146,6 +148,7 @@ class YOCOSMALL(nn.Module):
 
 class YOCOTINY(nn.Module):
     def __init__(self, num_classes=13, count_range=6):
+        super(YOCOTINY, self).__init__()
         self.num_classes = num_classes
         self.count_range = count_range
         self.output_dim = num_classes * count_range
