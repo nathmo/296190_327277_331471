@@ -333,18 +333,25 @@ class ChocolateDataset(Dataset):
 # ====================
 # F1 SCORE
 # ====================
-def compute_f1(y_true_list, y_pred_list):
+def compute_f1(y_true_list, y_pred_list, num_classes=13):
     y_true = np.array(y_true_list)
     y_pred = np.array(y_pred_list)
 
+    # Initialize lists to store per-class F1 scores
     f1_scores = []
-    for i in range(len(y_true)):
-        tpi = np.minimum(y_true[i], y_pred[i]).sum()
-        fpni = np.abs(y_true[i] - y_pred[i]).sum()
-        f1 = (2 * tpi) / (2 * tpi + fpni) if (2 * tpi + fpni) > 0 else 0.0
+
+    for i in range(num_classes):
+        # True Positives (TP), False Positives (FP), False Negatives (FN)
+        tp = np.minimum(y_true[:, i], y_pred[:, i]).sum()
+        fp = np.maximum(y_pred[:, i] - y_true[:, i], 0).sum()
+        fn = np.maximum(y_true[:, i] - y_pred[:, i], 0).sum()
+
+        # F1 score per class
+        f1 = (2 * tp) / (2 * tp + fp + fn) if (2 * tp + fp + fn) > 0 else 0.0
         f1_scores.append(f1)
 
-    return np.mean(f1_scores)
+    # Return both average F1 and per-class F1
+    return np.mean(f1_scores), f1_scores
 
 # ====================
 # ARGUMENTS
@@ -455,45 +462,37 @@ def main():
         val_loss = running_val_loss / len(val_loader)
         val_losses.append(val_loss)
 
-        # Validation on synthetic data
+        # F1 on real train
         model.eval()
-        running_val_loss = 0.0
         y_true_list = []
         y_pred_list = []
-
         with torch.no_grad():
             for images, labels in tqdm(real_train_loader, desc=f"Epoch {epoch+1}/{args.EPOCHS} [F1 Train]"):
                 images, labels = images.to(device), labels.to(device)
 
                 outputs = model(images)  # [B, 13, 6]
-                loss = sum(criterion(outputs[:, i, :], labels[:, i]) for i in range(NUM_CLASSES)) / NUM_CLASSES
-                running_val_loss += loss.item()
-
                 preds = outputs.argmax(dim=2)  # [B, 13]
                 y_true_list.extend(labels.cpu().numpy())
                 y_pred_list.extend(preds.cpu().numpy())
 
-        f1_train = compute_f1(y_true_list, y_pred_list)
-        real_val_f1_scores.append(f1_train)
+        f1_train, per_class_f1_train = compute_f1(y_true_list, y_pred_list)
+        real_train_f1_scores.append(f1_train)
 
-        running_val_loss = 0.0
+        # F1 on real test
+        model.eval()
         y_true_list = []
         y_pred_list = []
-
         with torch.no_grad():
-            for images, labels in tqdm(real_train_loader, desc=f"Epoch {epoch+1}/{args.EPOCHS} [F1 Test]"):
+            for images, labels in tqdm(real_val_loader, desc=f"Epoch {epoch+1}/{args.EPOCHS} [F1 Test]"):
                 images, labels = images.to(device), labels.to(device)
 
                 outputs = model(images)  # [B, 13, 6]
-                loss = sum(criterion(outputs[:, i, :], labels[:, i]) for i in range(NUM_CLASSES)) / NUM_CLASSES
-                running_val_loss += loss.item()
-
                 preds = outputs.argmax(dim=2)  # [B, 13]
                 y_true_list.extend(labels.cpu().numpy())
                 y_pred_list.extend(preds.cpu().numpy())
 
-        f1_test = compute_f1(y_true_list, y_pred_list)
-        real_train_f1_scores.append(f1_test)
+        f1_test, per_class_f1_test = compute_f1(y_true_list, y_pred_list)
+        real_val_f1_scores.append(f1_test)
 
         print(f"Epoch {epoch+1}: Train Loss = {train_loss:.4f} | Val Loss = {val_loss:.4f} | F1_real_train = {f1_train:.4f} | F1_real_test = {f1_test:.4f}")
 
@@ -506,6 +505,8 @@ def main():
             f.write(f"Val Loss: {val_loss:.6f}\n")
             f.write(f"Validation real train F1 Score: {f1_train:.6f}\n")
             f.write(f"Validation real val F1 Score: {f1_test:.6f}\n")
+            f.write(f"Per-Class F1 (Train): {', '.join([f'{x:.4f}' for x in per_class_f1_train])}\n")
+            f.write(f"Per-Class F1 (Test): {', '.join([f'{x:.4f}' for x in per_class_f1_test])}\n")
 
         # Prediction CSV
         prediction_csv_path = OUTPUT_PATH / f"prediction_epoch_{epoch+1}.csv"
@@ -517,8 +518,8 @@ def main():
     plt.figure(figsize=(10, 5))
     plt.plot(train_losses, label="Train Loss")
     plt.plot(val_losses, label="Val Loss")
-    plt.plot(f1_train, label="F1 real train Score")
-    plt.plot(f1_test, label="F1 real val Score")
+    plt.plot(real_train_f1_scores, label="F1 real train Score")
+    plt.plot(real_val_f1_scores, label="F1 real val Score")
     plt.xlabel("Epoch")
     plt.ylabel("Metric")
     plt.title("Training Curve")
