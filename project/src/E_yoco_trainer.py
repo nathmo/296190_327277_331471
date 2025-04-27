@@ -298,6 +298,7 @@ JITTER_PROB = 0.1
 transform = transforms.Compose([
     transforms.Resize((800, 1200)),
     transforms.RandomHorizontalFlip(),
+    transforms.RandomVerticalFlip(),
     transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05),
     transforms.ToTensor(),
 ])
