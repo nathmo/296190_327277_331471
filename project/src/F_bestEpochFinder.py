@@ -3,7 +3,7 @@ import re
 """
 this script print the best performing epoch by F1 value on the real dataset.
 """
-def find_top_val_f1_files(root_dir="checkpoints", top_n=20):
+def find_top_val_f1_files(root_dir="checkpoints", top_n=5):
     scores = []
 
     # Recursively walk through all subfolders
@@ -41,4 +41,4 @@ def find_top_val_f1_files(root_dir="checkpoints", top_n=20):
         print("\n\n")
 
 if __name__ == "__main__":
-    find_top_val_f1_files(root_dir="checkpoints", top_n=20)
+    find_top_val_f1_files(root_dir="checkpoints", top_n=3)
