@@ -101,11 +101,11 @@ class YOCOLARGE(nn.Module):
         self.layer6 = BasicBlock(384, 384, downsample=True)  # 18x12
 
         self.head = nn.Sequential(
-            nn.Conv2d(384, 128, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(128),
-            nn.PReLU(128),
+            nn.Conv2d(384, 256, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(256),
+            nn.PReLU(256),
 
-            nn.Conv2d(128, self.output_dim, kernel_size=1, stride=1, bias=True),
+            nn.Conv2d(256, self.output_dim, kernel_size=1, stride=1, bias=True),
         )
 
     def forward(self, x):
