@@ -87,33 +87,23 @@ class YOCOLARGE(nn.Module):
         self.num_classes = num_classes
         self.count_range = count_range
         self.output_dim = num_classes * count_range
-
         self.stem = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(32),
-            nn.PReLU(32),
+            nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(16),
+            nn.PReLU(16),
         )
-
-        self.layer1 = BasicBlock(32, 64, downsample=True)    # 600x400
-        self.layer2 = BasicBlock(64, 128, downsample=True)   # 300x200
-        self.layer3 = BasicBlock(128, 256, downsample=True)  # 150x100
-        self.layer4 = BasicBlock(256, 512, downsample=True)  # 75x50
-        self.layer5 = BasicBlock(512, 768, downsample=True)  # 37x25
-        self.layer6 = BasicBlock(768, 768, downsample=True)  # 18x12
-
+        
+        self.layer1 = BasicBlock(16, 32, downsample=True)
+        self.layer2 = BasicBlock(32, 64, downsample=True)
+        self.layer3 = BasicBlock(64, 128, downsample=True)
+        self.layer4 = BasicBlock(128, 256, downsample=True)
+        self.layer5 = BasicBlock(256, 256, downsample=True)
+        self.layer6 = BasicBlock(256, 256, downsample=True)
+        
         self.head = nn.Sequential(
-            nn.Conv2d(768, 512, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(512),
-            nn.PReLU(512),
-
-            nn.Conv2d(512, 256, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(256),
-            nn.PReLU(256),
-
             nn.Conv2d(256, 128, kernel_size=3, stride=1, padding=1, bias=False),
             nn.BatchNorm2d(128),
             nn.PReLU(128),
-
             nn.Conv2d(128, self.output_dim, kernel_size=1, stride=1, bias=True),
         )
 
