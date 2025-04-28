@@ -96,12 +96,12 @@ class YOCOLARGE(nn.Module):
         self.layer1 = BasicBlock(24, 48, downsample=True)    # 600x400
         self.layer2 = BasicBlock(48, 96, downsample=True)    # 300x200
         self.layer3 = BasicBlock(96, 192, downsample=True)   # 150x100
-        self.layer4 = BasicBlock(192, 256, downsample=True)  # 75x50
-        self.layer5 = BasicBlock(256, 256, downsample=True)  # 37x25
-        self.layer6 = BasicBlock(256, 256, downsample=True)  # 18x12
+        self.layer4 = BasicBlock(192, 384, downsample=True)  # 75x50
+        self.layer5 = BasicBlock(384, 384, downsample=True)  # 37x25
+        self.layer6 = BasicBlock(384, 384, downsample=True)  # 18x12
 
         self.head = nn.Sequential(
-            nn.Conv2d(256, 128, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.Conv2d(384, 128, kernel_size=3, stride=1, padding=1, bias=False),
             nn.BatchNorm2d(128),
             nn.PReLU(128),
 
