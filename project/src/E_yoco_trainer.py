@@ -428,16 +428,33 @@ def main():
         # TRAIN
         for images, labels in tqdm(train_loader, desc=f"Epoch {epoch+1}/{args.EPOCHS} [Train]"):
             images, labels = images.to(device), labels.to(device)
-
+    
             optimizer.zero_grad()
             outputs = model(images)  # [B, 13, 6]
-
-            loss = sum(criterion(outputs[:, i, :], labels[:, i]) for i in range(NUM_CLASSES)) / NUM_CLASSES
+    
+            # --- Base per-class loss ---
+            loss = 0.0
+            for i in range(NUM_CLASSES):
+                pred_counts = outputs[:, i, 0]    # assuming count is at index 0 of dim=2
+                true_counts = labels[:, i]        # true count for class i
+                loss += criterion(pred_counts, true_counts)
+            loss /= NUM_CLASSES  # average over classes
+    
+            # --- False positive penalty for white dragibus (class 0) ---
+            pred_white = outputs[:, 0, 0]         # class 0: white dragibus
+            true_white = labels[:, 0]
+    
+            mask_no_white = (true_white == 0)
+            if mask_no_white.any():
+                penalty_fp_white = (pred_white[mask_no_white] ** 2).mean()
+                loss += 1.0 * penalty_fp_white  # you can tune this weight
+    
+            # --- Backprop ---
             loss.backward()
             optimizer.step()
-
+    
             running_loss += loss.item()
-
+    
         train_loss = running_loss / len(train_loader)
         train_losses.append(train_loss)
 
