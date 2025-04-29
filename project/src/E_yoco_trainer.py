@@ -384,7 +384,7 @@ def compute_loss(outputs, labels, criterion, weight_fp=1.0):
     batch_size = outputs.size(0)
     lo = []
     for i in range(NUM_CLASSES):
-        if i = 0:
+        if i == 0:
             lo.append(5*criterion(outputs[:, i, :], labels[:, i]))
         else:
             lo.append(criterion(outputs[:, i, :], labels[:, i]))
