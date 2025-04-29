@@ -370,7 +370,7 @@ def parse_args():
 
     return parser.parse_args()
 
-def loss(outputs, labels, weight_fp=1.0):
+def compute_loss(outputs, labels, weight_fp=1.0):
     """
     Args:
         outputs: Tensor of shape (batch_size, NUM_CLASSES) – raw logits
@@ -460,7 +460,7 @@ def main():
             optimizer.zero_grad()
             outputs = model(images)  # [B, 13, 6]
 
-            loss =  loss(outputs, labels, weight_fp=2.0)
+            loss =  compute_loss(outputs, labels, weight_fp=2.0)
             loss.backward()
             optimizer.step()
 
@@ -480,7 +480,7 @@ def main():
                 images, labels = images.to(device), labels.to(device)
 
                 outputs = model(images)  # [B, 13, 6]
-                loss =  loss(outputs, labels, weight_fp=2.0)
+                loss =  compute_loss(outputs, labels, weight_fp=2.0)
                 running_val_loss += loss.item()
 
                 preds = outputs.argmax(dim=2)  # [B, 13]
