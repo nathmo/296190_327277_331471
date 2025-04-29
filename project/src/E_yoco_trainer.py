@@ -383,9 +383,12 @@ def compute_loss(outputs, labels, weight_fp=1.0):
     NUM_CLASSES = outputs.size(1)
     total_loss = 0.0
 
+    # Ensure labels have the same shape as outputs
+    labels = labels.float()  # In case the labels are not float
+
     for i in range(NUM_CLASSES):
-        target = labels[:, i]
-        pred = outputs[:, i]
+        target = labels[:, i]  # This will have shape (batch_size,)
+        pred = outputs[:, i]   # This will have shape (batch_size,)
 
         # BCEWithLogits loss for class i
         bce_loss = F.binary_cross_entropy_with_logits(pred, target)
