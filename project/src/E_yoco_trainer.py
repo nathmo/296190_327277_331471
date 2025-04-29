@@ -476,7 +476,7 @@ def main():
                 images, labels = images.to(device), labels.to(device)
 
                 outputs = model(images)  # [B, 13, 6]
-                loss =  compute_loss(outputs, labels, weight_fp=2.0)
+                loss =  compute_loss(outputs, labels, criterion, weight_fp=2.0)
                 running_val_loss += loss.item()
 
                 preds = outputs.argmax(dim=2)  # [B, 13]
