@@ -369,26 +369,29 @@ def parse_args():
     parser.add_argument("--NUM_WORKER", default=4, type=int)
 
     return parser.parse_args()
-
+ 
 def compute_loss(outputs, labels, weight_fp=1.0):
     """
     Args:
         outputs: Tensor of shape (batch_size, NUM_CLASSES) – raw logits
-        labels: Tensor of shape (batch_size, NUM_CLASSES) – binary {0,1}
+        labels: Tensor of shape (batch_size,) – class index (0 to NUM_CLASSES-1)
         weight_fp: weight for false positive penalty term
 
     Returns:
         Scalar loss value
     """
     NUM_CLASSES = outputs.size(1)
+    batch_size = outputs.size(0)
+
+    # Create one-hot encoded labels (shape: [batch_size, NUM_CLASSES])
+    one_hot_labels = torch.zeros(batch_size, NUM_CLASSES, device=outputs.device)
+    one_hot_labels[torch.arange(batch_size), labels] = 1.0
+
     total_loss = 0.0
 
-    # Ensure labels have the same shape as outputs
-    labels = labels.float()  # In case the labels are not float
-
     for i in range(NUM_CLASSES):
-        target = labels[:, i]  # This will have shape (batch_size,)
-        pred = outputs[:, i]   # This will have shape (batch_size,)
+        target = one_hot_labels[:, i]  # This will have shape (batch_size,)
+        pred = outputs[:, i]           # This will have shape (batch_size,)
 
         # BCEWithLogits loss for class i
         bce_loss = F.binary_cross_entropy_with_logits(pred, target)
@@ -399,6 +402,7 @@ def compute_loss(outputs, labels, weight_fp=1.0):
         total_loss += bce_loss + weight_fp * fp_penalty
 
     return total_loss / NUM_CLASSES
+
 
 
 # ====================
