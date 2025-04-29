@@ -370,6 +370,34 @@ def parse_args():
 
     return parser.parse_args()
 
+def loss(outputs, labels, weight_fp=1.0):
+    """
+    Args:
+        outputs: Tensor of shape (batch_size, NUM_CLASSES) – raw logits
+        labels: Tensor of shape (batch_size, NUM_CLASSES) – binary {0,1}
+        weight_fp: weight for false positive penalty term
+
+    Returns:
+        Scalar loss value
+    """
+    NUM_CLASSES = outputs.size(1)
+    total_loss = 0.0
+
+    for i in range(NUM_CLASSES):
+        target = labels[:, i]
+        pred = outputs[:, i]
+
+        # BCEWithLogits loss for class i
+        bce_loss = F.binary_cross_entropy_with_logits(pred, target)
+
+        # Penalize false positives (pred > 0 but label = 0)
+        fp_penalty = (torch.sigmoid(pred) * (1 - target)).mean()
+
+        total_loss += bce_loss + weight_fp * fp_penalty
+
+    return total_loss / NUM_CLASSES
+
+
 # ====================
 # MAIN TRAIN FUNCTION
 # ====================
@@ -428,33 +456,16 @@ def main():
         # TRAIN
         for images, labels in tqdm(train_loader, desc=f"Epoch {epoch+1}/{args.EPOCHS} [Train]"):
             images, labels = images.to(device), labels.to(device)
-    
+
             optimizer.zero_grad()
             outputs = model(images)  # [B, 13, 6]
-    
-            # --- Base per-class loss ---
-            loss = 0.0
-            for i in range(NUM_CLASSES):
-                pred_counts = outputs[:, i, 0]    # assuming count is at index 0 of dim=2
-                true_counts = labels[:, i]        # true count for class i
-                loss += criterion(pred_counts, true_counts)
-            loss /= NUM_CLASSES  # average over classes
-    
-            # --- False positive penalty for white dragibus (class 0) ---
-            pred_white = outputs[:, 0, 0]         # class 0: white dragibus
-            true_white = labels[:, 0]
-    
-            mask_no_white = (true_white == 0)
-            if mask_no_white.any():
-                penalty_fp_white = (pred_white[mask_no_white] ** 2).mean()
-                loss += 1.0 * penalty_fp_white  # you can tune this weight
-    
-            # --- Backprop ---
+
+            loss =  loss(outputs, labels, weight_fp=2.0)
             loss.backward()
             optimizer.step()
-    
+
             running_loss += loss.item()
-    
+
         train_loss = running_loss / len(train_loader)
         train_losses.append(train_loss)
 
@@ -469,7 +480,7 @@ def main():
                 images, labels = images.to(device), labels.to(device)
 
                 outputs = model(images)  # [B, 13, 6]
-                loss = sum(criterion(outputs[:, i, :], labels[:, i]) for i in range(NUM_CLASSES)) / NUM_CLASSES
+                loss =  loss(outputs, labels, weight_fp=2.0)
                 running_val_loss += loss.item()
 
                 preds = outputs.argmax(dim=2)  # [B, 13]
