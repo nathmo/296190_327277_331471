@@ -370,7 +370,7 @@ def parse_args():
 
     return parser.parse_args()
  
-def compute_loss(outputs, labels, weight_fp=1.0):
+def compute_loss(outputs, labels, criterion, weight_fp=1.0):
     """
     Args:
         outputs: Tensor of shape (batch_size, NUM_CLASSES) – raw logits
@@ -382,26 +382,15 @@ def compute_loss(outputs, labels, weight_fp=1.0):
     """
     NUM_CLASSES = outputs.size(1)
     batch_size = outputs.size(0)
-
-    # Create one-hot encoded labels (shape: [batch_size, NUM_CLASSES])
-    one_hot_labels = torch.zeros(batch_size, NUM_CLASSES, device=outputs.device)
-    one_hot_labels[torch.arange(batch_size), labels] = 1.0
-
-    total_loss = 0.0
-
+    lo = []
     for i in range(NUM_CLASSES):
-        target = one_hot_labels[:, i]  # This will have shape (batch_size,)
-        pred = outputs[:, i]           # This will have shape (batch_size,)
+        if i = 0:
+            lo.append(5*criterion(outputs[:, i, :], labels[:, i]))
+        else:
+            lo.append(criterion(outputs[:, i, :], labels[:, i]))
+    losses = sum(lo) / NUM_CLASSES
 
-        # BCEWithLogits loss for class i
-        bce_loss = F.binary_cross_entropy_with_logits(pred, target)
-
-        # Penalize false positives (pred > 0 but label = 0)
-        fp_penalty = (torch.sigmoid(pred) * (1 - target)).mean()
-
-        total_loss += bce_loss + weight_fp * fp_penalty
-
-    return total_loss / NUM_CLASSES
+    return losses
 
 
 
@@ -467,7 +456,7 @@ def main():
             optimizer.zero_grad()
             outputs = model(images)  # [B, 13, 6]
 
-            loss =  compute_loss(outputs, labels, weight_fp=2.0)
+            loss =  compute_loss(outputs, labels, criterion, weight_fp=2.0)
             loss.backward()
             optimizer.step()
 
