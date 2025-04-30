@@ -375,7 +375,7 @@ def compute_loss(outputs, labels, criterion, weight_fp=1.0):
     Args:
         outputs: Tensor of shape (batch_size, NUM_CLASSES, 6) – raw logits for count classes
         labels: Tensor of shape (batch_size, NUM_CLASSES) – true count class index (0 to 5)
-        weight_fp: unused (placeholder for future false positive weighting)
+        weight_fp: 
 
     Returns:
         Scalar loss value
@@ -395,7 +395,7 @@ def compute_loss(outputs, labels, criterion, weight_fp=1.0):
             over_mask = pred_class > true     # boolean mask where overprediction occurred
             # Increase the loss only for overpredictions
             weight = torch.ones_like(base_loss)
-            weight[over_mask] = 5.0
+            weight[over_mask] = weight_fp
             base_loss = base_loss * weight
 
         lo.append(base_loss.mean())
@@ -466,7 +466,7 @@ def main():
             optimizer.zero_grad()
             outputs = model(images)  # [B, 13, 6]
 
-            loss =  compute_loss(outputs, labels, criterion, weight_fp=2.0)
+            loss =  compute_loss(outputs, labels, criterion, weight_fp=4.0)
             loss.backward()
             optimizer.step()
 
