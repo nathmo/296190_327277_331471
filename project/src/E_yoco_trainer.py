@@ -373,9 +373,9 @@ def parse_args():
 def compute_loss(outputs, labels, criterion, weight_fp=1.0):
     """
     Args:
-        outputs: Tensor of shape (batch_size, NUM_CLASSES) – raw logits
-        labels: Tensor of shape (batch_size,) – class index (0 to NUM_CLASSES-1)
-        weight_fp: weight for false positive penalty term
+        outputs: Tensor of shape (batch_size, NUM_CLASSES, 6) – raw logits for count classes
+        labels: Tensor of shape (batch_size, NUM_CLASSES) – true count class index (0 to 5)
+        weight_fp: unused (placeholder for future false positive weighting)
 
     Returns:
         Scalar loss value
@@ -383,15 +383,25 @@ def compute_loss(outputs, labels, criterion, weight_fp=1.0):
     NUM_CLASSES = outputs.size(1)
     batch_size = outputs.size(0)
     lo = []
+
     for i in range(NUM_CLASSES):
+        preds = outputs[:, i, :]  # logits for class i
+        true = labels[:, i]       # true count class (int 0–5)
+
+        base_loss = criterion(preds, true)
+
         if i == 0:
-            lo.append(5*criterion(outputs[:, i, :], labels[:, i]))
-        else:
-            lo.append(criterion(outputs[:, i, :], labels[:, i]))
+            pred_class = preds.argmax(dim=1)  # predicted count class (0–5)
+            over_mask = pred_class > true     # boolean mask where overprediction occurred
+            # Increase the loss only for overpredictions
+            weight = torch.ones_like(base_loss)
+            weight[over_mask] = 5.0
+            base_loss = base_loss * weight
+
+        lo.append(base_loss.mean())
+
     losses = sum(lo) / NUM_CLASSES
-
     return losses
-
 
 
 # ====================
