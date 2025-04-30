@@ -373,9 +373,9 @@ def parse_args():
 def compute_loss(outputs, labels, criterion, weight_fp=1.0):
     """
     Args:
-        outputs: Tensor of shape (batch_size, NUM_CLASSES, 6) – raw logits for count classes
-        labels: Tensor of shape (batch_size, NUM_CLASSES) – true count class index (0 to 5)
-        weight_fp: 
+        outputs: Tensor of shape (batch_size, NUM_CLASSES) – raw logits
+        labels: Tensor of shape (batch_size,) – class index (0 to NUM_CLASSES-1)
+        weight_fp: weight for false positive penalty term
 
     Returns:
         Scalar loss value
@@ -383,24 +383,13 @@ def compute_loss(outputs, labels, criterion, weight_fp=1.0):
     NUM_CLASSES = outputs.size(1)
     batch_size = outputs.size(0)
     lo = []
-
     for i in range(NUM_CLASSES):
-        preds = outputs[:, i, :]  # logits for class i
-        true = labels[:, i]       # true count class (int 0–5)
-
-        base_loss = criterion(preds, true)
-
         if i == 0:
-            pred_class = preds.argmax(dim=1)  # predicted count class (0–5)
-            over_mask = pred_class > true     # boolean mask where overprediction occurred
-            # Increase the loss only for overpredictions
-            weight = torch.ones_like(base_loss)
-            weight[over_mask] = weight_fp
-            base_loss = base_loss * weight
-
-        lo.append(base_loss.mean())
-
+            lo.append(weight_fp*criterion(outputs[:, i, :], labels[:, i]))
+        else:
+            lo.append(criterion(outputs[:, i, :], labels[:, i]))
     losses = sum(lo) / NUM_CLASSES
+
     return losses
 
 
@@ -486,7 +475,7 @@ def main():
                 images, labels = images.to(device), labels.to(device)
 
                 outputs = model(images)  # [B, 13, 6]
-                loss =  compute_loss(outputs, labels, criterion, weight_fp=2.0)
+                loss =  compute_loss(outputs, labels, criterion, weight_fp=20.0)
                 running_val_loss += loss.item()
 
                 preds = outputs.argmax(dim=2)  # [B, 13]
