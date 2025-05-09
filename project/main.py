@@ -119,7 +119,7 @@ from PIL import Image
 import pandas as pd
 import numpy as np
 import os
-from yoco import YOCO
+from src.yoco import YOCO
 from glob import glob
 from tqdm import tqdm
 import seaborn as sns
@@ -127,10 +127,10 @@ import matplotlib.pyplot as plt
 
 # === CONFIG ===
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-MODEL_PATH = "model_94F1.pt"
-TRAIN_IMAGE_DIR = "../chocolate_data/dataset_project_iapr2025/test/"
-TEST_IMAGE_DIR = "../chocolate_data/dataset_project_iapr2025/test/"
-CSV_GT_PATH = "../chocolate_data/dataset_project_iapr2025/test.csv"
+MODEL_PATH = "src/checkpoints/medium100k/model_epoch_9.pth" # "src/checkpoints/medium100k/model_epoch_18.pth"
+TRAIN_IMAGE_DIR = "src/dataset/dataset_project_iapr2025/test/"
+TEST_IMAGE_DIR = "src/dataset/dataset_project_iapr2025/test/"
+CSV_GT_PATH = "src/dataset/dataset_project_iapr2025/test.csv"
 SUBMISSION_PATH = "submission.csv"
 
 NUM_CLASSES = 13

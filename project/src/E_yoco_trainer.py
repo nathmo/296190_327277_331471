@@ -318,17 +318,21 @@ class ChocolateDataset(Dataset):
 
     def __getitem__(self, idx):
         row = self.data.iloc[idx]
-        img_id = f"L{row['id']}" if self.L else f"{row['id']}"
-        img_path = self.img_dir / f"{img_id}.JPG"
+        img_id = row['id']
+        if self.L:
+            img_path = self.img_dir / f"L{img_id}.JPG"
+        else:
+            img_path = self.img_dir / f"{img_id}.JPG"
         image = Image.open(img_path).convert('RGB')
         image = transform(image)
 
-        label = torch.tensor(row[1:].values.astype(np.int64))  # [13]
+        label = torch.tensor(row[1:].values.astype(np.int64))  # shape: [13]
 
         if self.train and random.random() < JITTER_PROB:
             label = torch.clamp(label + torch.randint(-1, 2, label.shape), 0, COUNT_RANGE - 1)
 
-        return image, label
+        return image, label, img_id  # return img_id
+
 
 # ====================
 # F1 SCORE
@@ -436,7 +440,7 @@ def main():
     print(f"Total Trainable Parameters: {total_params}")
 
     # Optimizer & Loss
-    optimizer = optim.Adam(model.parameters(), lr=args.LEARNING_RATE)
+    optimizer = optim.Adam(model.parameters(), lr=args.LEARNING_RATE) # this is tunable and would merit more experimentation (combo with learning rate)
     criterion = nn.CrossEntropyLoss()
 
     train_losses = []
@@ -449,7 +453,7 @@ def main():
         running_loss = 0.0
 
         # TRAIN
-        for images, labels in tqdm(train_loader, desc=f"Epoch {epoch+1}/{args.EPOCHS} [Train]"):
+        for images, labels, img_id in tqdm(train_loader, desc=f"Epoch {epoch+1}/{args.EPOCHS} [Train]"):
             images, labels = images.to(device), labels.to(device)
 
             optimizer.zero_grad()
@@ -469,9 +473,10 @@ def main():
         running_val_loss = 0.0
         y_true_list = []
         y_pred_list = []
+        all_ids = []
 
         with torch.no_grad():
-            for images, labels in tqdm(val_loader, desc=f"Epoch {epoch+1}/{args.EPOCHS} [Validation Train]"):
+            for images, labels, img_id in tqdm(val_loader, desc=f"Epoch {epoch+1}/{args.EPOCHS} [Validation Train]"):
                 images, labels = images.to(device), labels.to(device)
 
                 outputs = model(images)  # [B, 13, 6]
@@ -489,10 +494,11 @@ def main():
         model.eval()
         y_true_list = []
         y_pred_list = []
+        #all_ids = []
         with torch.no_grad():
-            for images, labels in tqdm(real_train_loader, desc=f"Epoch {epoch+1}/{args.EPOCHS} [F1 Train]"):
+            for images, labels, img_id in tqdm(real_train_loader, desc=f"Epoch {epoch+1}/{args.EPOCHS} [F1 Train]"):
                 images, labels = images.to(device), labels.to(device)
-
+                #all_ids.extend(img_id)  # collect image IDs
                 outputs = model(images)  # [B, 13, 6]
                 preds = outputs.argmax(dim=2)  # [B, 13]
                 y_true_list.extend(labels.cpu().numpy())
@@ -505,10 +511,11 @@ def main():
         model.eval()
         y_true_list = []
         y_pred_list = []
+        all_ids = []
         with torch.no_grad():
-            for images, labels in tqdm(real_val_loader, desc=f"Epoch {epoch+1}/{args.EPOCHS} [F1 Test]"):
+            for images, labels, img_id in tqdm(real_val_loader, desc=f"Epoch {epoch+1}/{args.EPOCHS} [F1 Test]"):
                 images, labels = images.to(device), labels.to(device)
-
+                all_ids.extend(img_id)  # collect image IDs
                 outputs = model(images)  # [B, 13, 6]
                 preds = outputs.argmax(dim=2)  # [B, 13]
                 y_true_list.extend(labels.cpu().numpy())
@@ -534,7 +541,7 @@ def main():
         # Prediction CSV
         prediction_csv_path = OUTPUT_PATH / f"prediction_epoch_{epoch+1}.csv"
         pred_df = pd.DataFrame(y_pred_list, columns=CHOCOLATE_CLASSES)
-        pred_df.insert(0, "id", range(len(pred_df)))
+        pred_df.insert(0, "id", all_ids)
         pred_df.to_csv(prediction_csv_path, index=False)
 
     # Final plot

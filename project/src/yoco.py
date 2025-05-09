@@ -131,9 +131,9 @@ class YOCOSMALL(nn.Module):
         self.output_dim = num_classes * count_range
 
         self.features = nn.Sequential(
-            nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1), # we should also try to tune all theses parameters
             nn.LeakyReLU(0.1),
-            nn.MaxPool2d(2),
+            nn.MaxPool2d(2), # we try with something else than max pooling. maybe even try every combination for every layer
 
             nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1),
             nn.LeakyReLU(0.1),
@@ -235,3 +235,22 @@ if __name__ == "__main__":
 
     for model in models:
         print_trainable_params(model)
+
+
+#from torchviz import make_dot
+#import torch
+
+#modelL = YOCOLARGE()
+#x = torch.randn(1, 3, 800, 1200)
+#y = modelL(x)
+#make_dot(y, params=dict(modelL.named_parameters())).render("yocoL_arch", format="png")
+
+#modelM = YOCO()
+#x = torch.randn(1, 3, 800, 1200)
+#y = modelM(x)
+#make_dot(y, params=dict(modelM.named_parameters())).render("yocoM_arch", format="png")
+
+#modelS = YOCOSMALL()
+#x = torch.randn(1, 3, 800, 1200)
+#y = modelS(x)
+#make_dot(y, params=dict(modelS.named_parameters())).render("yocoS_arch", format="png")

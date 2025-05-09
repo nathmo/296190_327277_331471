@@ -1,6 +1,6 @@
 
 """
-This synthetic dataset generatorto will use the cropped picture to generate new synthetic scene to train a convolution
+This synthetic dataset generator will use the cropped picture to generate new synthetic scene to train a convolution
 model that aim to count the number of instance of chocolate amoung 13 class.
 
 dataset/
@@ -178,7 +178,7 @@ CHOCOLATE_MAX = 5
 COLLISION_TOLERANCE = 0.2
 PLACEMENT_RETRY_LIMIT = 20
 TRAIN_RATIO_DEFAULT = 0.8
-NUM_IMAGES_DEFAULT = 10000
+NUM_IMAGES_DEFAULT = 100
 FINAL_SCALE_DEFAULT = 1.0
 
 START_IMAGE_ID = 1000000
