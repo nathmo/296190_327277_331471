@@ -127,7 +127,7 @@ import matplotlib.pyplot as plt
 
 # === CONFIG ===
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-MODEL_PATH = "src/checkpoints/medium100k/model_epoch_9.pth" # "src/checkpoints/medium100k/model_epoch_18.pth"
+MODEL_PATH = "checkpoint.pth" # "src/checkpoints/medium100k/model_epoch_18.pth"
 TRAIN_IMAGE_DIR = "src/dataset/dataset_project_iapr2025/test/"
 TEST_IMAGE_DIR = "src/dataset/dataset_project_iapr2025/test/"
 CSV_GT_PATH = "src/dataset/dataset_project_iapr2025/test.csv"

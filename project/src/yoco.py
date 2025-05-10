@@ -237,20 +237,28 @@ if __name__ == "__main__":
         print_trainable_params(model)
 
 
-#from torchviz import make_dot
-#import torch
+"""
+from torchviz import make_dot
+import torch
 
-#modelL = YOCOLARGE()
-#x = torch.randn(1, 3, 800, 1200)
-#y = modelL(x)
-#make_dot(y, params=dict(modelL.named_parameters())).render("yocoL_arch", format="png")
+modelB = BasicBlock(24, 48, downsample=True)
+x = torch.randn(48, 24, 1, 1)
+y = modelB(x)
+make_dot(y, params=dict(modelB.named_parameters())).render("yoco_BasicBloc_arch", format="png")
 
-#modelM = YOCO()
-#x = torch.randn(1, 3, 800, 1200)
-#y = modelM(x)
-#make_dot(y, params=dict(modelM.named_parameters())).render("yocoM_arch", format="png")
 
-#modelS = YOCOSMALL()
-#x = torch.randn(1, 3, 800, 1200)
-#y = modelS(x)
-#make_dot(y, params=dict(modelS.named_parameters())).render("yocoS_arch", format="png")
+modelL = YOCOLARGE()
+x = torch.randn(1, 3, 800, 1200)
+y = modelL(x)
+make_dot(y, params=dict(modelL.named_parameters())).render("yocoL_arch", format="png")
+
+modelM = YOCO()
+x = torch.randn(1, 3, 800, 1200)
+y = modelM(x)
+make_dot(y, params=dict(modelM.named_parameters())).render("yocoM_arch", format="png")
+
+modelS = YOCOSMALL()
+x = torch.randn(1, 3, 800, 1200)
+y = modelS(x)
+make_dot(y, params=dict(modelS.named_parameters())).render("yocoS_arch", format="png")
+"""
