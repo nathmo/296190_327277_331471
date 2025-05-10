@@ -1,0 +1,7 @@
+Destination folder: Z
+Number of images: 50
+Train ratio: 0.8
+Final scaling factor: 1.0
+Used 6 threads
+Chocolate classes: {'Jelly_White': 0, 'Jelly_Milk': 1, 'Jelly_Black': 2, 'Amandina': 3, 'Crème_brulée': 4, 'Triangolo': 5, 'Tentation_noir': 6, 'Comtesse': 7, 'Noblesse': 8, 'Noir_authentique': 9, 'Passion_au_lait': 10, 'Arabia': 11, 'Stracciatella': 12}
+Rescaling factors: {'Amandina': (1, 1), 'Arabia': (0.7, 0.7), 'Comtesse': (0.7, 0.7), 'Crème_brulée': (0.5, 0.5), 'Jelly_White': (0.5, 0.5), 'Jelly_Milk': (0.5, 0.5), 'Jelly_Black': (0.5, 0.5), 'Noblesse': (0.7, 0.7), 'Noir_authentique': (0.7, 0.7), 'Passion_au_lait': (0.7, 0.7), 'Stracciatella': (0.7, 0.7), 'Tentation_noir': (0.7, 0.7), 'Triangolo': (0.7, 0.7)}
